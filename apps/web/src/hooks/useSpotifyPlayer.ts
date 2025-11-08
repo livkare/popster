@@ -2,8 +2,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useSpotifyStore } from "../store/spotify-store.js";
 import { initializePlayer, type SpotifyPlayer } from "../lib/spotify-player.js";
 import { playTrack, pause, transferToHostDevice } from "../lib/spotify-api.js";
-import { createMessage } from "@hitster/proto";
-import type { Message } from "@hitster/proto";
+import { isStartSongMessage, type Message } from "@hitster/proto";
 
 /**
  * Hook for managing Spotify Web Playback SDK and playback control
@@ -25,6 +24,9 @@ export function useSpotifyPlayer() {
       setError(null);
 
       try {
+        if (!accessToken) {
+          throw new Error("Access token is required");
+        }
         const { player, deviceId: newDeviceId } = await initializePlayer(
           accessToken,
           "Hitster Player"
@@ -134,6 +136,7 @@ export function useSpotifyPlayer() {
         return;
       }
 
+      // TypeScript now knows message is START_SONG type
       const { trackUri, positionMs = 0 } = message.payload;
 
       if (!isReady || !accessToken || !deviceId) {

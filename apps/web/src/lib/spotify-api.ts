@@ -12,6 +12,10 @@ export async function transferToHostDevice(
   deviceId: string,
   accessToken: string
 ): Promise<void> {
+  if (!accessToken) {
+    throw new Error("Access token is required to transfer playback");
+  }
+  
   const response = await fetch(`${SPOTIFY_API_BASE}/me/player`, {
     method: "PUT",
     headers: {
@@ -26,6 +30,9 @@ export async function transferToHostDevice(
 
   if (!response.ok) {
     const errorText = await response.text();
+    if (response.status === 401) {
+      throw new Error("Spotify authentication expired. Please reconnect to Spotify.");
+    }
     throw new Error(`Failed to transfer playback: ${response.status} ${errorText}`);
   }
 }
@@ -38,6 +45,10 @@ export async function playTrack(
   positionMs: number,
   accessToken: string
 ): Promise<void> {
+  if (!accessToken) {
+    throw new Error("Access token is required to play track");
+  }
+  
   // First transfer to device, then play
   const deviceId = await getCurrentDeviceId(accessToken);
   if (deviceId) {
@@ -58,6 +69,9 @@ export async function playTrack(
 
   if (!response.ok) {
     const errorText = await response.text();
+    if (response.status === 401) {
+      throw new Error("Spotify authentication expired. Please reconnect to Spotify.");
+    }
     throw new Error(`Failed to play track: ${response.status} ${errorText}`);
   }
 }
@@ -109,6 +123,10 @@ export async function getPlaybackState(accessToken: string): Promise<any> {
  * 2. Falls back to checking if user can access playback devices (premium feature)
  */
 export async function checkPremium(accessToken: string): Promise<boolean> {
+  if (!accessToken) {
+    throw new Error("Access token is required to check premium status");
+  }
+  
   try {
     // Method 1: Check product field from user profile
     const userResponse = await fetch(`${SPOTIFY_API_BASE}/me`, {

@@ -83,10 +83,11 @@ export class MessageRouter {
       // Log message receipt
       logger.debug({ connectionId, messageType: message.type }, "Received message");
 
-      // Room key validation (except for CREATE_ROOM and JOIN_ROOM)
+      // Room key validation (except for CREATE_ROOM, JOIN_ROOM, and REQUEST_ROOM_STATE)
       if (
         message.type !== "CREATE_ROOM" &&
         message.type !== "JOIN_ROOM" &&
+        message.type !== "REQUEST_ROOM_STATE" &&
         message.type !== "PING" &&
         message.type !== "PONG"
       ) {
@@ -243,5 +244,80 @@ messageRouter.registerHandler("REGISTER_DEVICE", async (ctx) => {
   roomManager.sendToConnection(ctx.connectionId, confirmation);
 
   logger.info({ connectionId: ctx.connectionId, roomId, deviceId }, "Device registered");
+});
+
+messageRouter.registerHandler("REQUEST_ROOM_STATE", async (ctx) => {
+  if (ctx.message.type !== "REQUEST_ROOM_STATE") {
+    return;
+  }
+
+  logger.info({ connectionId: ctx.connectionId }, "REQUEST_ROOM_STATE handler called");
+  const { roomKey } = ctx.message.payload;
+  logger.info({ connectionId: ctx.connectionId, roomKey }, "Processing REQUEST_ROOM_STATE");
+  
+  // Import handlers to access models
+  const { getRoomModel, getPlayerModel } = await import("./room/handlers.js");
+  const roomModel = getRoomModel();
+  const playerModel = getPlayerModel();
+  
+  if (!roomModel || !playerModel) {
+    roomManager.sendError(ctx.connectionId, "SERVER_ERROR", "Models not initialized");
+    return;
+  }
+  
+  // Find room by key
+  const room = roomModel.getRoomByKey(roomKey);
+  if (!room) {
+    roomManager.sendError(ctx.connectionId, "ROOM_NOT_FOUND", "Room not found");
+    return;
+  }
+
+  // Re-associate connection with room (in case connection changed)
+  roomManager.associateConnection(ctx.connectionId, room.id);
+  
+  // Update connection metadata
+  const { connectionManager } = await import("./connection.js");
+  const metadata = connectionManager.getConnection(ctx.connectionId);
+  if (metadata) {
+    metadata.roomId = room.id;
+    metadata.roomKey = room.roomKey;
+  }
+
+  // Get all players in room
+  const players = playerModel.getRoomPlayers(room.id);
+  
+  // Get current game state
+  const { gameStateManager } = await import("./game/game-state-manager.js");
+  const currentGameState = gameStateManager.getGameState(room.id);
+
+  // Send ROOM_STATE response
+  const roomStateResponse = createMessage("ROOM_STATE", {
+    roomKey: room.roomKey,
+    players: players.map((p) => ({
+      id: p.id,
+      name: p.name,
+      avatar: p.avatar,
+    })),
+    gameState: currentGameState
+      ? {
+          status: currentGameState.status,
+          currentRound: currentGameState.currentRound,
+          currentTrack:
+            currentGameState.rounds[currentGameState.currentRound]?.currentCard.trackUri,
+        }
+      : undefined,
+  });
+
+  roomManager.sendToConnection(ctx.connectionId, roomStateResponse);
+
+  logger.info(
+    {
+      connectionId: ctx.connectionId,
+      roomId: room.id,
+      roomKey: room.roomKey,
+      playersCount: players.length,
+    },
+    "Room state requested and sent"
+  );
 });
 

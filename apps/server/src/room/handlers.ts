@@ -22,6 +22,20 @@ export function initializeHandlers(rm: RoomModel, pm: PlayerModel): void {
 }
 
 /**
+ * Get room model (for use by other modules).
+ */
+export function getRoomModel(): RoomModel | undefined {
+  return roomModel;
+}
+
+/**
+ * Get player model (for use by other modules).
+ */
+export function getPlayerModel(): PlayerModel | undefined {
+  return playerModel;
+}
+
+/**
  * Handle CREATE_ROOM message.
  */
 export async function handleCreateRoom(
@@ -205,9 +219,45 @@ export async function handleJoinRoom(
       // Associate connection with room
       roomManager.associateConnection(connectionId, room.id);
       
-      // Get updated players list
-      const players = playerModel.getRoomPlayers(room.id);
+      // Ensure player is in game state (in case they were removed during disconnect)
       const currentGameState = gameStateManager.getGameState(room.id);
+      if (currentGameState) {
+        const playerInGameState = currentGameState.players.find(p => p.id === existingPlayerByName.id);
+        if (!playerInGameState) {
+          // Player not in game state - add them back
+          try {
+            const updatedState = joinPlayer(currentGameState, {
+              id: existingPlayerByName.id,
+              name: existingPlayerByName.name,
+              avatar: existingPlayerByName.avatar,
+              tokens: currentGameState.startingTokens, // Use starting tokens from game mode
+              score: 0,
+            });
+            gameStateManager.setGameState(room.id, updatedState);
+            gameStateManager.persistGameState(room.id, updatedState);
+            logger.info(
+              {
+                roomId: room.id,
+                playerId: existingPlayerByName.id,
+              },
+              "Re-added player to game state after reconnection"
+            );
+          } catch (error) {
+            logger.warn(
+              {
+                roomId: room.id,
+                playerId: existingPlayerByName.id,
+                error: error instanceof Error ? error.message : String(error),
+              },
+              "Failed to re-add player to game state (may already be in game)"
+            );
+          }
+        }
+      }
+      
+      // Get updated players list (after ensuring player is in game state)
+      const players = playerModel.getRoomPlayers(room.id);
+      const updatedGameState = gameStateManager.getGameState(room.id);
       
       // Send JOINED response
       const joinedResponse = createMessage("JOINED", {
@@ -230,12 +280,12 @@ export async function handleJoinRoom(
           name: p.name,
           avatar: p.avatar,
         })),
-        gameState: currentGameState
+        gameState: updatedGameState
           ? {
-              status: currentGameState.status,
-              currentRound: currentGameState.currentRound,
+              status: updatedGameState.status,
+              currentRound: updatedGameState.currentRound,
               currentTrack:
-                currentGameState.rounds[currentGameState.currentRound]?.currentCard.trackUri,
+                updatedGameState.rounds[updatedGameState.currentRound]?.currentCard.trackUri,
             }
           : undefined,
       });
@@ -309,6 +359,23 @@ export async function handleJoinRoom(
     // Get updated game state for broadcast
     const currentGameState = gameStateManager.getGameState(room.id);
 
+    // Get all connections in room for debugging
+    const connectionsInRoom = roomManager.getConnectionsInRoom(room.id);
+    logger.info(
+      {
+        roomId: room.id,
+        roomKey: room.roomKey,
+        newPlayerId: player.id,
+        newPlayerName: player.name,
+        totalPlayers: players.length,
+        playerIds: players.map((p) => p.id),
+        playerNames: players.map((p) => p.name),
+        connectionsInRoom: connectionsInRoom.length,
+        connectionIds: connectionsInRoom,
+      },
+      "Player joined room - broadcasting to all connections"
+    );
+
     // Send JOINED response to the new player
     const joinedResponse = createMessage("JOINED", {
       playerId: player.id,
@@ -339,6 +406,17 @@ export async function handleJoinRoom(
           }
         : undefined,
     });
+
+    logger.info(
+      {
+        roomId: room.id,
+        roomKey: room.roomKey,
+        playersCount: players.length,
+        players: players.map((p) => ({ id: p.id, name: p.name })),
+        connectionsToBroadcast: connectionsInRoom.length,
+      },
+      "Broadcasting ROOM_STATE after player join"
+    );
 
     roomManager.broadcastToRoom(room.id, roomStateResponse);
 

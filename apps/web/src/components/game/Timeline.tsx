@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { motion } from "framer-motion";
 import { Card } from "./Card.js";
-import type { TimelineEntry, GameState } from "@hitster/engine";
+import type { GameState } from "@hitster/engine";
 import { getPlayerTimeline } from "@hitster/engine";
 
 interface TimelineProps {

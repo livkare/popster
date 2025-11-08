@@ -32,7 +32,7 @@ export function GameScreen({
   sendMessage,
   disabled,
 }: GameScreenProps) {
-  const { players, isHost } = useRoomStore();
+  const { isHost } = useRoomStore();
   const { myPlayerId, myTokens } = usePlayerStore();
 
   const currentRound = gameState.rounds[gameState.currentRound];
@@ -42,9 +42,6 @@ export function GameScreen({
   const myPlayer = useMemo(() => {
     return gameState.players.find((p) => p.id === myPlayerId);
   }, [gameState.players, myPlayerId]);
-
-  // Check if it's my turn to place
-  const isMyTurn = currentRound?.currentPlayerId === myPlayerId;
 
   // Check if I can place (haven't placed yet this round)
   const canPlace = useMemo(() => {

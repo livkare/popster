@@ -21,7 +21,9 @@ export default {
         },
       },
       fontFamily: {
-        sans: ['-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'sans-serif'],
+        sans: ['Fredoka', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'sans-serif'],
+        bubbly: ['Bubblegum Sans', 'Fredoka', 'cursive'],
+        display: ['Bubblegum Sans', 'Fredoka', 'cursive'],
       },
     },
   },

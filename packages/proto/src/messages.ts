@@ -121,6 +121,10 @@ export const DeviceRegisteredSchema = z.object({
   success: z.boolean(),
 });
 
+export const RequestRoomStateSchema = z.object({
+  roomKey: z.string().length(6),
+});
+
 // ============================================================================
 // Message Envelope - Discriminated Union
 // ============================================================================
@@ -144,6 +148,7 @@ export const MessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("PONG"), payload: PongSchema }),
   z.object({ type: z.literal("REGISTER_DEVICE"), payload: RegisterDeviceSchema }),
   z.object({ type: z.literal("DEVICE_REGISTERED"), payload: DeviceRegisteredSchema }),
+  z.object({ type: z.literal("REQUEST_ROOM_STATE"), payload: RequestRoomStateSchema }),
 ]);
 
 // ============================================================================
@@ -168,6 +173,7 @@ export type Error = z.infer<typeof ErrorSchema>;
 export type Pong = z.infer<typeof PongSchema>;
 export type RegisterDevice = z.infer<typeof RegisterDeviceSchema>;
 export type DeviceRegistered = z.infer<typeof DeviceRegisteredSchema>;
+export type RequestRoomState = z.infer<typeof RequestRoomStateSchema>;
 export type Message = z.infer<typeof MessageSchema>;
 
 // ============================================================================

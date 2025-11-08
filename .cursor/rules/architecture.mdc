@@ -1,0 +1,164 @@
+---
+alwaysApply: true
+---
+###############################################################################
+## HIGH-LEVEL PRODUCT TRUTH
+###############################################################################
+- The host computer’s browser tab is the ONLY device that plays audio via Spotify’s Web Playback SDK.
+- All other phones are controllers only (no audio playback, no Spotify auth).
+- We must NEVER restream, proxy, cache, or redistribute Spotify audio to clients.
+- The app runs on a local network (LAN). No cloud dependencies.
+- Canonical game state lives on a local Node.js server. Players connect via WebSockets.
+- PWA frontends (installable) on phones. Accessibility and performance are first-class.
+
+###############################################################################
+## TECH STACK (DO THIS)
+###############################################################################
+- Frontend: React + TypeScript + Vite, Tailwind CSS, Radix UI primitives, Framer Motion.
+- State: Zustand (preferred) OR Redux Toolkit if needed for complex flows.
+- Transport: WebSockets (ws or Socket.IO). tRPC for type-safe RPC (optional but preferred).
+- Backend: Node.js 20+, Fastify (HTTP), ws/uWebSockets.js, SQLite (Prisma or better-sqlite3).
+- Discovery: mDNS/Bonjour on the server; QR with http://<host-ip>:<port> fallback.
+- PWA: Workbox for SW; offline shell for lobby/UI.
+- Auth (host only): Spotify Authorization Code flow; scopes: streaming, user-read-playback-state, user-modify-playback-state.
+
+###############################################################################
+## HARD BOUNDARIES (NEVER DO)
+###############################################################################
+- DO NOT render or play audio on player phones or any client other than the host tab.
+- DO NOT capture, proxy, re-encode, record, or rebroadcast Spotify audio from the host to other clients.
+- DO NOT require Spotify login for player phones.
+- DO NOT add cloud databases, cloud auth, external analytics, or remote error reporting.
+- DO NOT ship copyrighted audio or preview files; Spotify is the only music source for this mode.
+
+###############################################################################
+## DIRECTORY & LAYERING RULES
+###############################################################################
+- Monorepo:
+  /apps/server       -> Fastify + ws + tRPC endpoints, mDNS, SQLite
+  /apps/web          -> React PWA (players + host tab UI)
+  /packages/engine   -> Pure game rules (deterministic reducers & types)
+  /packages/proto    -> Shared Zod schemas & message contracts
+  /packages/ui-kit   -> Reusable UI components (headless, Tailwind/Radix based)
+- The engine package MUST have zero browser/Node side-effects. Only pure logic.
+- The server is authoritative for game state; the web app is a thin client.
+
+###############################################################################
+## SPOTIFY INTEGRATION RULES (HOST-ONLY)
+###############################################################################
+- Only the host tab loads https://sdk.scdn.co/spotify-player.js and initializes the Web Playback SDK.
+- Host tab obtains `device_id` from the SDK and uses Web API Player endpoints to:
+  - transfer playback to that device,
+  - start/pause/seek tracks,
+  - read playback state and available devices.
+- Players never call Spotify APIs and never include <audio> tied to Spotify.
+- UX: Add an autoplay “Tap to enable sound” on the host tab; keep a warm AudioContext.
+- Fail fast if the host user is not Spotify Premium (block Start Game with actionable notice).
+- Never pass Spotify access tokens to non-host clients. Store host tokens in memory on the server or IndexedDB in the host tab only.
+
+###############################################################################
+## MESSAGES & CONTRACTS (KEEP CONSISTENT)
+###############################################################################
+- All real-time messages go over WebSockets and are validated with Zod shared types.
+- Required core messages:
+  JOIN{name, avatar}
+  SEAT{playerId}
+  START_SONG{trackUri, positionMs?}      // emitted by server; handled by host tab to call Spotify Web API
+  PLACE{playerId, slotIndex}
+  CHALLENGE{playerId, targetPlayerId, slotIndex}
+  REVEAL{year}
+  ROUND_SUMMARY{timeline, scores}
+- The server NEVER sends raw audio or Spotify playback buffers—only control signals.
+
+###############################################################################
+## SECURITY & PRIVACY (LAN SCOPE)
+###############################################################################
+- Room key (PIN) required to join. Show as QR. Do HMAC(roomKey, payload) on sensitive commands.
+- No PII collection. No external network calls except Spotify from host tab.
+- HTTP on LAN is acceptable; if TLS is added later, keep it optional and local-only.
+- Store minimal data in SQLite; avoid long-lived tokens. Refresh Spotify tokens only when the host tab is active.
+
+###############################################################################
+## PWA & ACCESSIBILITY
+###############################################################################
+- Provide install banners; precache shell and static assets. Runtime cache for non-Spotify assets only.
+- Respect prefers-reduced-motion. Ensure 4.5:1 color contrast. Keyboard navigability for all controls.
+- ARIA roles for sliders, lists, and buttons (timeline placements & token actions must be accessible).
+
+###############################################################################
+## PERFORMANCE BUDGETS
+###############################################################################
+- Initial JS (gz): ≤ 2.0 MB for /apps/web.
+- TTI ≤ 2.5s on mid-range mobile over LAN.
+- WebSocket RTT under 80ms on 5GHz Wi-Fi.
+- Avoid layout thrash: use transforms + will-change for animations.
+
+###############################################################################
+## TESTING & QA
+###############################################################################
+- Unit: engine reducers and scoring (packages/engine) must be 100% covered.
+- Contract tests: Zod schemas in packages/proto; reject malformed WS messages.
+- E2E: Playwright with 3 contexts (server headless, host tab, two players). Simulate a full round.
+- Integration: verify that only host tab executes Spotify actions; assert that players never create AudioContext.
+
+###############################################################################
+## CODE STYLE & DX
+###############################################################################
+- TypeScript strict mode ON everywhere.
+- ESLint (typescript-eslint), Prettier, import/order, no-floating-promises.
+- Absolute imports via tsconfig paths. Keep React components pure and small (<200 lines when possible).
+- Use Tailwind for styling; Radix UI as headless primitives; Framer Motion for feedback/transition only.
+- Logs: Pino on server with redaction of secrets. No analytics by default.
+
+###############################################################################
+## FILE TEMPLATES & SNIPPETS (PREFER THESE)
+###############################################################################
+- Host Spotify player bootstrap (apps/web):
+  - Lazy-load the SDK.
+  - On ready: store `device_id`.
+  - Provide `transferToHostDevice()` and `playOnHost(trackUri, positionMs)` helpers.
+- Server play flow (apps/server):
+  - `startSong(trackUri, positionMs?)` -> broadcast START_SONG.
+  - No direct Spotify calls from the server unless acting strictly on behalf of the host via secure channel.
+- Message handlers must validate input with Zod, then call engine reducers, then broadcast derived state.
+
+###############################################################################
+## UX REQUIREMENTS (NON-FUNCTIONAL)
+###############################################################################
+- Host “Soundcheck” step: device picker, volume test tone, autoplay unlock.
+- Clear error states: Premium required, device unavailable, network down.
+- “Cast View” page: read-only big-screen timeline & now-playing (no audio on that page unless it IS the host tab).
+
+
+###############################################################################
+## PROHIBITED CODE PATTERNS (BLOCK THESE)
+###############################################################################
+- Any attempt to pipe, proxy, encode, or send Spotify audio to clients.
+- Creating AudioContext or <audio> elements on non-host clients.
+- Using third-party streaming SDKs or cloud backends.
+- Writing Spotify tokens to logs or to client-visible storage outside host tab.
+- Using iframes or hidden players on client phones to access Spotify.
+
+###############################################################################
+## ENV & CONFIG
+###############################################################################
+- Server env:
+  PORT=5173
+  MDNS_ENABLED=true
+  ROOM_KEY_LENGTH=6
+- Host tab (runtime only, not committed):
+  SPOTIFY_CLIENT_ID (used in OAuth init screen, never exposed to non-host clients)
+- Do not store refresh tokens on disk by default; prefer in-memory on server OR IndexedDB on host tab.
+
+###############################################################################
+## WHAT TO GENERATE WHEN ASKED FOR “PLAYBACK”
+###############################################################################
+- Generate host-tab helpers that:
+  1) Initialize Web Playback SDK
+  2) Retrieve device_id
+  3) Transfer playback to device_id
+  4) Play/pause/seek via Web API
+- Generate server handlers that:
+  - Broadcast START_SONG to all clients
+  - Never interact with audio or send audio data
+  - Maintain authoritative game state

@@ -83,11 +83,32 @@ export class RoomManager {
     const connections = this.getConnectionsInRoom(roomId);
     const messageStr = JSON.stringify(validation.data);
 
+    logger.info(
+      {
+        roomId,
+        messageType: validation.data.type,
+        totalConnections: connections.length,
+        connectionIds: connections,
+      },
+      "Broadcasting message to room"
+    );
+
+    let sentCount = 0;
     for (const connectionId of connections) {
       const metadata = connectionManager.getConnection(connectionId);
       if (metadata && metadata.socket.readyState === WebSocket.OPEN) {
         try {
           metadata.socket.send(messageStr);
+          sentCount++;
+          logger.debug(
+            {
+              connectionId,
+              roomId,
+              messageType: validation.data.type,
+              playerId: metadata.playerId,
+            },
+            "Sent broadcast message to connection"
+          );
         } catch (error) {
           logger.error(
             {
@@ -98,10 +119,28 @@ export class RoomManager {
             "Failed to broadcast message to connection"
           );
         }
+      } else {
+        logger.warn(
+          {
+            connectionId,
+            roomId,
+            hasMetadata: !!metadata,
+            socketState: metadata?.socket.readyState,
+          },
+          "Skipping broadcast - connection not ready"
+        );
       }
     }
 
-    logger.debug({ roomId, connectionCount: connections.length, messageType: validation.data.type }, "Broadcast message to room");
+    logger.info(
+      {
+        roomId,
+        connectionCount: connections.length,
+        sentCount,
+        messageType: validation.data.type,
+      },
+      "Broadcast message to room completed"
+    );
   }
 
   /**

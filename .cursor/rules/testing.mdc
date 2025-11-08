@@ -1,0 +1,24 @@
+---
+alwaysApply: true
+---
+
+### Code Review and Testing Workflow
+IMPORTANT: when asked to test with playwrite i do **not** mean to run the tests, I mean for you to use playwrite mpc to click around!!
+
+1. **Code Review:**
+   After implementing new code, or after asked to fix a bug, perform a thorough code review. Look for:
+
+   * Hidden or potential bugs
+   * Unused or redundant code
+   * Overengineered or unnecessarily complex solutions
+
+2. **Playwright Testing:**
+   Once the code passes review, use **Playwright mpc** to manually click through the flow ,at http://localhost:3000/, of creating a game, connecting to spotify etc:
+
+   * Follow the process of creating a game step-by-step.
+   * Take screenshots during the flow.
+   * Monitor the console for warnings or errors.
+
+3. **Bug Fixing and Iteration:**
+   If you discover issues, fix them immediately.
+   After each fix, redo the clicking around with Playwright and repeat the flow until all issues — even minor ones — are resolved.

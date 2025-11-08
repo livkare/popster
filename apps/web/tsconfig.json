@@ -2,7 +2,6 @@
   "extends": "../../tsconfig.json",
   "compilerOptions": {
     "outDir": "./dist",
-    "rootDir": ".",
     "module": "ESNext",
     "target": "ES2020",
     "lib": ["ES2020", "DOM", "DOM.Iterable"],
@@ -19,7 +18,8 @@
       "@hitster/engine": ["../../packages/engine/src"],
       "@hitster/proto": ["../../packages/proto/src"],
       "@hitster/ui-kit": ["../../packages/ui-kit/src"]
-    }
+    },
+    "skipLibCheck": true
   },
   "include": ["src", "vite.config.ts"],
   "exclude": ["node_modules", "dist", "**/*.test.ts", "**/*.test.tsx"]
