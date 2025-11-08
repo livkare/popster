@@ -1,0 +1,39 @@
+{
+  "name": "@hitster/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "lint": "eslint . --ext .ts",
+    "type-check": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@fastify/websocket": "^8.3.1",
+    "better-sqlite3": "^9.2.2",
+    "bonjour-service": "^1.1.0",
+    "fastify": "^4.26.2",
+    "pino": "^9.4.0",
+    "pino-pretty": "^10.3.1",
+    "qrcode": "^1.5.3",
+    "uuid": "^9.0.1",
+    "ws": "^8.16.0",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^20.11.24",
+    "@types/qrcode": "^1.5.5",
+    "@types/uuid": "^9.0.8",
+    "@types/ws": "^8.5.10",
+    "dotenv": "^17.2.3",
+    "tsup": "^8.0.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.3.3"
+  }
+}
