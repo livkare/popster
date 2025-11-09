@@ -6,7 +6,7 @@ import { useSpotifyAuth } from "../hooks/useSpotifyAuth.js";
 import { useSpotifyPlayer } from "../hooks/useSpotifyPlayer.js";
 import { useRoomStore, useSpotifyStore } from "../store/index.js";
 import { LobbyScreen } from "../components/game/LobbyScreen.js";
-import { GameScreen } from "../components/game/GameScreen.js";
+import { HostGameView } from "../components/game/HostGameView.js";
 import { PlaylistSelector } from "../components/PlaylistSelector.js";
 import { PlaylistTracksPreview } from "../components/PlaylistTracksPreview.js";
 import { createMessage } from "@hitster/proto";
@@ -20,7 +20,6 @@ import { InvalidRoomKey } from "../components/InvalidRoomKey.js";
 interface GameContentProps {
   roomKey: string;
   gameState: GameState | null;
-  roundSummary: any;
   players: any[];
   isAuthenticated: boolean;
   isPremium: boolean | null;
@@ -33,7 +32,6 @@ interface GameContentProps {
 function GameContent({
   roomKey,
   gameState,
-  roundSummary,
   players,
   isAuthenticated,
   isPremium,
@@ -73,10 +71,10 @@ function GameContent({
       useRoomStore.getState().setRoundSummary(null);
     };
 
+    // Use HostGameView for host
     return (
-      <GameScreen
+      <HostGameView
         gameState={gameState}
-        roundSummary={roundSummary || undefined}
         sendMessage={sendMessage}
         onReveal={handleReveal}
         onContinueRound={handleContinueRound}
@@ -91,7 +89,7 @@ export function HostPage() {
   const { roomKey } = useParams<{ roomKey: string }>();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { players, gameMode, gameState, roundSummary, selectedPlaylist } = useRoomStore();
+  const { players, gameMode, gameState, selectedPlaylist, setPlaylistTracks } = useRoomStore();
   
   // Host does NOT join as a player - they only create/host the room
   // They receive ROOM_STATE broadcasts to see players
@@ -321,6 +319,9 @@ export function HostPage() {
         tracks: playlistSelectionState.tracks,
       });
       sendMessage(message);
+
+      // Store tracks in store for HostGameView
+      setPlaylistTracks(playlistSelectionState.tracks);
 
       // Reset selection state
       setPlaylistSelectionState({
@@ -660,7 +661,6 @@ export function HostPage() {
         <GameContent
           roomKey={roomKey}
           gameState={gameState}
-          roundSummary={roundSummary}
           players={players}
           isAuthenticated={isAuthenticated}
           isPremium={isPremium}

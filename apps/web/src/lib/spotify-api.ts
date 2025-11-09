@@ -163,12 +163,18 @@ export async function transferToHostDevice(
 
 /**
  * Play a track on the host device
+ * @param trackUri - The track URI to play (spotify:track:...)
+ * @param positionMs - Position in milliseconds. If undefined, will resume current track if it matches, otherwise starts from beginning
+ * @param accessToken - Spotify access token
+ * @param deviceId - Device ID to play on
+ * @param isResume - If true and track matches current track, calls play without uris to resume. If resume fails, will use positionMs if provided.
  */
 export async function playTrack(
   trackUri: string,
-  positionMs: number,
+  positionMs: number | undefined,
   accessToken: string,
-  deviceId: string
+  deviceId: string,
+  isResume: boolean = false
 ): Promise<void> {
   if (!accessToken) {
     throw new Error("Access token is required to play track");
@@ -198,17 +204,56 @@ export async function playTrack(
     }
   }
 
+  // If resuming the same track, call play without uris (Spotify API will resume from paused position)
+  // According to Spotify API docs: "Resume playback on the user's active device" when no body is sent
+  if (isResume) {
+    console.log("[Spotify API] Attempting to resume playback (no uris)");
+    const response = await fetch(`${SPOTIFY_API_BASE}/me/player/play?device_id=${deviceId}`, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      // 404 means no active playback - this is expected if track was unloaded
+      // Other errors might be recoverable, but we'll fall through to play with uris
+      if (response.status === 404) {
+        console.log("[Spotify API] No active playback to resume (404), will play with uris");
+      } else {
+        console.warn("[Spotify API] Resume failed, falling back to play with uris:", {
+          status: response.status,
+          error: errorText
+        });
+      }
+      // Fall through to play with uris
+    } else {
+      console.log("[Spotify API] Successfully resumed playback from paused position");
+      return;
+    }
+  }
+
   // Play track with device_id in query parameter
+  // If we were trying to resume but it failed, use positionMs if provided
+  // Otherwise, if positionMs is undefined, default to 0 (start from beginning)
+  const body: { uris: string[]; position_ms?: number } = {
+    uris: [trackUri],
+  };
+  
+  // Always include position_ms if provided (even if 0, as it's an explicit position)
+  // If isResume was true but resume failed, positionMs should contain the saved position
+  if (positionMs !== undefined) {
+    body.position_ms = positionMs;
+  }
+
   const response = await fetch(`${SPOTIFY_API_BASE}/me/player/play?device_id=${deviceId}`, {
     method: "PUT",
     headers: {
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      uris: [trackUri],
-      position_ms: positionMs,
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {

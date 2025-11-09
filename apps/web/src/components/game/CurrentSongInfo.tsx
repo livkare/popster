@@ -3,6 +3,7 @@ interface CurrentSongInfoProps {
   trackName?: string;
   artistName?: string;
   albumArt?: string;
+  isPlaying?: boolean;
 }
 
 export function CurrentSongInfo({
@@ -10,6 +11,7 @@ export function CurrentSongInfo({
   trackName,
   artistName,
   albumArt,
+  isPlaying = false,
 }: CurrentSongInfoProps) {
   if (!trackUri) {
     return null;
@@ -37,8 +39,17 @@ export function CurrentSongInfo({
         </p>
       </div>
       <div className="flex items-center gap-2">
-        <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-        <span className="text-xs text-gray-600">Playing</span>
+        {isPlaying ? (
+          <>
+            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+            <span className="text-xs text-gray-600">Playing</span>
+          </>
+        ) : (
+          <>
+            <div className="w-2 h-2 bg-gray-400 rounded-full" />
+            <span className="text-xs text-gray-600">Paused</span>
+          </>
+        )}
       </div>
     </div>
   );

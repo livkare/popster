@@ -475,6 +475,268 @@ User → Click "Start Game"
 
 ---
 
+## Play/Pause and Resume Functionality
+
+**File**: `apps/web/src/hooks/useSpotifyPlayer.ts` → `play()` and `pausePlayback()`
+
+The application implements robust play/pause functionality with automatic resume from the last paused position. This is critical for game flow where players may pause to place cards.
+
+### How Resume Works
+
+**Key Principle**: When resuming the same track that was paused, we use Spotify's resume API (calling `/me/player/play` without `uris`) which automatically resumes from the paused position. This is more reliable than manually tracking and setting position.
+
+### Position Tracking
+
+The application maintains position state in multiple ways for reliability:
+
+1. **`currentTrackRef` (Primary Source)**:
+   - Stores `{ uri: string, position: number }` for the current track
+   - Updated continuously via `player_state_changed` events
+   - Persists even when SDK state is unavailable
+   - Never cleared when paused (kept for resume)
+
+2. **SDK State (`getCurrentState()`)**:
+   - Most accurate position when available
+   - Can return `null` when paused (this is expected)
+   - Used as primary source when available
+
+3. **State Changed Handler**:
+   - Continuously updates `currentTrackRef` as track plays
+   - Saves position even when paused
+   - Logs position saves for debugging
+
+### Pause Flow
+
+**File**: `apps/web/src/hooks/useSpotifyPlayer.ts` → `pausePlayback()`
+
+1. **Prevent Rapid Toggling**:
+   ```javascript
+   if (isTogglingRef.current) {
+     return; // Ignore if already toggling
+   }
+   isTogglingRef.current = true;
+   ```
+
+2. **Save Position (Multiple Attempts)**:
+   - **Attempt 1**: Try `getCurrentState()` before pausing
+     - If successful, save position immediately
+   - **Fallback**: If `getCurrentState()` returns `null`, use saved state from `currentTrackRef`
+     - This handles cases where SDK state is unavailable
+   - **Retry**: After calling pause API, wait 100ms and retry `getCurrentState()`
+     - Sometimes state becomes available after pause completes
+
+3. **Call Pause API**:
+   ```javascript
+   await pause(accessToken); // PUT /me/player/pause
+   ```
+
+4. **Log State**:
+   - Logs whether position was saved
+   - Shows saved state for debugging
+
+5. **Reset Toggle Lock**:
+   - After 300ms delay, allow toggling again
+
+**Key Point**: Position is saved through multiple mechanisms to ensure it's always available for resume, even if SDK state is temporarily unavailable.
+
+### Play/Resume Flow
+
+**File**: `apps/web/src/hooks/useSpotifyPlayer.ts` → `play()`
+
+1. **Prevent Rapid Toggling**:
+   ```javascript
+   if (isTogglingRef.current) {
+     return; // Ignore if already toggling
+   }
+   isTogglingRef.current = true;
+   ```
+
+2. **Check for Saved State**:
+   ```javascript
+   const hasSavedState = currentTrackRef.current?.uri === trackUri && 
+                        currentTrackRef.current.position !== undefined;
+   ```
+
+3. **Determine Resume Strategy**:
+   - **If SDK state available**:
+     - Check if same track is currently paused
+     - If yes → use resume API (`isResume = true`)
+     - If no → play with `uris` and saved position
+   - **If SDK state unavailable (`null`)**:
+     - Check if we have saved state for same track
+     - If yes → use resume API (`isResume = true`)
+     - If no → start from beginning
+
+4. **Handle Explicit Position**:
+   ```javascript
+   if (positionMs !== undefined) {
+     // Explicit position provided (e.g., from START_SONG message)
+     positionToUse = positionMs;
+     shouldResume = false; // Don't use resume API
+   }
+   ```
+
+5. **Initialize Track Ref**:
+   ```javascript
+   // After playing, ensure track ref is initialized
+   if (!currentTrackRef.current || currentTrackRef.current.uri !== trackUri) {
+     currentTrackRef.current = {
+       uri: trackUri,
+       position: positionToUse || 0,
+     };
+   }
+   ```
+
+6. **Call Play API**:
+   ```javascript
+   await playTrack(trackUri, positionToUse, accessToken, deviceId, shouldResume);
+   ```
+
+### Resume API Implementation
+
+**File**: `apps/web/src/lib/spotify-api.ts` → `playTrack()`
+
+When `isResume = true`:
+
+1. **Call Resume API** (no `uris`):
+   ```javascript
+   const response = await fetch(
+     `${SPOTIFY_API_BASE}/me/player/play?device_id=${deviceId}`,
+     {
+       method: "PUT",
+       headers: {
+         Authorization: `Bearer ${accessToken}`,
+       },
+       // No body - this tells Spotify to resume current track
+     }
+   );
+   ```
+
+2. **Handle Response**:
+   - **200 OK**: Successfully resumed from paused position
+   - **404**: No active playback to resume → fall through to play with `uris`
+   - **Other errors**: Log and fall through to play with `uris`
+
+3. **Fallback to Play with URIs**:
+   ```javascript
+   // If resume failed, play with uris and saved position
+   const body = {
+     uris: [trackUri],
+     position_ms: positionMs, // Use saved position
+   };
+   ```
+
+**Key Point**: According to Spotify API docs, calling `/me/player/play` without `uris` resumes the currently paused track from its paused position. This is more reliable than manually setting `position_ms`.
+
+### State Changed Handler
+
+**File**: `apps/web/src/hooks/useSpotifyPlayer.ts` → `stateChangedHandler`
+
+The handler continuously updates position:
+
+```javascript
+player.addListener("player_state_changed", (state) => {
+  if (state) {
+    const currentTrack = state.track_window?.current_track;
+    if (currentTrack) {
+      currentTrackRef.current = {
+        uri: currentTrack.uri,
+        position: state.position || 0,
+      };
+      // Log when paused for debugging
+      if (state.paused) {
+        console.log("[Spotify Player] Position saved from state_changed (paused)");
+      }
+    }
+  }
+  // Never clear currentTrackRef when state is null - keep it for resume
+});
+```
+
+**Key Point**: The handler always updates position, even when paused, ensuring we have the most recent position for resume.
+
+### Edge Cases Handled
+
+1. **SDK State Returns `null`**:
+   - Use saved state from `currentTrackRef`
+   - Still attempt resume if same track
+
+2. **Position is 0**:
+   - Still save it (might be start of track)
+   - Resume will work correctly
+
+3. **Rapid Toggle**:
+   - 300ms cooldown prevents race conditions
+   - Ignores rapid clicks
+
+4. **State Not Available Before Pause**:
+   - Retry after pause completes
+   - Use state_changed handler's last known state
+
+5. **Resume API Fails**:
+   - Fall back to playing with `uris` and saved position
+   - Ensures playback always works
+
+### Logging for Debugging
+
+The implementation includes comprehensive logging:
+
+- `[Spotify Player] Saved position from getCurrentState() before pause:` - Position saved successfully
+- `[Spotify Player] Using saved state from state_changed handler:` - Using fallback state
+- `[Spotify Player] Saved position after pause (retry):` - Position saved on retry
+- `[Spotify Player] Position saved from state_changed (paused):` - Handler saved position
+- `[Spotify Player] Same track is paused, will resume from position:` - Resume detected
+- `[Spotify Player] SDK state unavailable, but have saved state:` - Using saved state
+- `[Spotify API] Attempting to resume playback (no uris)` - Resume API called
+- `[Spotify API] Successfully resumed playback from paused position` - Resume succeeded
+
+### Complete Resume Flow Example
+
+```
+User clicks Pause:
+  → pausePlayback() called
+  → Try getCurrentState() → returns { position: 45000, paused: false }
+  → Save to currentTrackRef: { uri: "spotify:track:...", position: 45000 }
+  → Call pause API
+  → Retry getCurrentState() after 100ms (backup)
+  → State changed handler fires with paused: true, position: 45000
+  → Update currentTrackRef again (redundant but safe)
+
+User clicks Play:
+  → play() called
+  → Check currentTrackRef: { uri: "spotify:track:...", position: 45000 }
+  → Try getCurrentState() → returns null (paused)
+  → Detect: same track, have saved state → shouldResume = true
+  → Call playTrack(..., isResume: true)
+  → Resume API called (no uris)
+  → Spotify resumes from position 45000
+  → Music continues from where it was paused! 🎵
+```
+
+### Key Design Decisions
+
+1. **Why Multiple Position Save Attempts?**
+   - `getCurrentState()` can return `null` when paused
+   - State_changed handler might not fire immediately
+   - Multiple attempts ensure position is always saved
+
+2. **Why Use Resume API Instead of position_ms?**
+   - More reliable (Spotify handles position internally)
+   - Works even if position tracking has small errors
+   - Follows Spotify's recommended approach
+
+3. **Why Keep Track Ref When State is Null?**
+   - State can be temporarily unavailable
+   - We need position for resume even if SDK state is null
+   - Never clear ref when paused
+
+4. **Why 300ms Toggle Cooldown?**
+   - Prevents race conditions from rapid clicks
+   - Gives API calls time to complete
+   - Improves stability
+
+---
+
 ## Summary
 
 The complete flow requires:
@@ -485,6 +747,7 @@ The complete flow requires:
 5. **Playback Command** - Server sends START_SONG message
 6. **Playback Execution** - Verify device active → transfer if needed → call REST API play
 7. **Audio Plays** - Spotify streams audio to host's computer
+8. **Pause/Resume** - Position tracked continuously → pause saves position → resume uses Spotify's resume API
 
-Each step has error handling and fallbacks to ensure robustness. The key insight is that activation is a multi-step process that requires both SDK-level activation (browser autoplay) and API-level activation (transfer playback to make device active).
+Each step has error handling and fallbacks to ensure robustness. The key insight is that activation is a multi-step process that requires both SDK-level activation (browser autoplay) and API-level activation (transfer playback to make device active). For resume, we use Spotify's native resume API which is more reliable than manually tracking position.
 
