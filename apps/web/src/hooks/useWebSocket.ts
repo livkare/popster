@@ -11,6 +11,7 @@ import {
   isStartRoundMessage,
   isRoundSummaryMessage,
   isDeviceRegisteredMessage,
+  isPlaylistSelectedMessage,
 } from "@hitster/proto";
 import type { GameState, GameMode, Round } from "@hitster/engine";
 import { createGame } from "@hitster/engine";
@@ -21,7 +22,7 @@ import { updatePlayerId } from "../lib/room-storage.js";
  */
 export function useWebSocket(onStartSong?: (message: Message) => void) {
   const { setConnected, setConnecting, setError } = useConnectionStore();
-  const { setRoom, updatePlayers, updateGameState, gameMode, isHost } = useRoomStore();
+  const { setRoom, updatePlayers, updateGameState, gameMode, isHost, setPlaylist } = useRoomStore();
   const { setPlayerId } = usePlayerStore();
   
   // Callback refs for navigation and room creation handlers
@@ -240,8 +241,18 @@ export function useWebSocket(onStartSong?: (message: Message) => void) {
       if (isStartSongMessage(message) && isHost && onStartSong) {
         onStartSong(message);
       }
+
+      // Handle PLAYLIST_SELECTED messages
+      if (isPlaylistSelectedMessage(message)) {
+        const { playlistId, playlistName, trackCount } = message.payload;
+        setPlaylist({
+          id: playlistId,
+          name: playlistName,
+          trackCount,
+        });
+      }
     },
-    [updatePlayers, updateGameState, setPlayerId, setError, setRoom, gameMode, isHost, onStartSong]
+    [updatePlayers, updateGameState, setPlayerId, setError, setRoom, gameMode, isHost, onStartSong, setPlaylist]
   );
 
   // Connect on mount

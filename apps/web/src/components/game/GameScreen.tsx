@@ -99,6 +99,15 @@ export function GameScreen({
     }
   };
 
+  const handleNextCard = () => {
+    // Only host can skip to next card
+    if (isHost && sendMessage) {
+      // Send START_ROUND without trackUri - server will pick next track from playlist
+      const message = createMessage("START_ROUND", {});
+      sendMessage(message);
+    }
+  };
+
   // Show round summary if available
   if (roundSummary && gameState.status === "round_summary") {
     return (
@@ -230,6 +239,19 @@ export function GameScreen({
           <ReactionPicker disabled={disabled} />
         </div>
       </div>
+
+      {/* Host Controls - Next Card */}
+      {isHost && gameState.status === "playing" && (
+        <div className="card">
+          <button
+            onClick={handleNextCard}
+            disabled={disabled}
+            className="btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Next Card
+          </button>
+        </div>
+      )}
     </div>
   );
 }

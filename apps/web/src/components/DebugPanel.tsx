@@ -182,10 +182,10 @@ export function DebugPanel() {
                   <span>Player ID: {playerState.myPlayerId || "null"}</span>
                 </div>
                 <div>
-                  <span>Tokens: {playerState.tokens}</span>
+                  <span>Tokens: {playerState.myTokens}</span>
                 </div>
                 <div>
-                  <span>Timeline Length: {playerState.timeline?.length || 0}</span>
+                  <span>Timeline Length: {playerState.myTimeline?.length || 0}</span>
                 </div>
               </div>
             </div>

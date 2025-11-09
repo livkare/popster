@@ -6,6 +6,7 @@ import {
   handleCreateRoom,
   handleJoinRoom,
   handleLeave,
+  handleSelectPlaylist,
 } from "./room/handlers.js";
 import {
   handleStartRound,
@@ -297,6 +298,7 @@ messageRouter.registerHandler("REQUEST_ROOM_STATE", async (ctx) => {
       id: p.id,
       name: p.name,
       avatar: p.avatar,
+      connected: p.connected,
     })),
     gameState: currentGameState
       ? {
@@ -319,5 +321,11 @@ messageRouter.registerHandler("REQUEST_ROOM_STATE", async (ctx) => {
     },
     "Room state requested and sent"
   );
+});
+
+messageRouter.registerHandler("SELECT_PLAYLIST", async (ctx) => {
+  if (ctx.message.type === "SELECT_PLAYLIST") {
+    await handleSelectPlaylist(ctx.connectionId, ctx.socket, ctx.message.payload);
+  }
 });
 

@@ -6,16 +6,130 @@
 const SPOTIFY_API_BASE = "https://api.spotify.com/v1";
 
 /**
+ * Wait for device to appear in Spotify's device list
+ * Also tries to find by matching the most recent "Hitster Player" device if exact ID doesn't match
+ * Returns the actual device ID found (may differ from SDK device_id)
+ */
+export async function waitForDeviceInList(
+  deviceId: string,
+  accessToken: string,
+  playerName: string = "Hitster Player",
+  maxAttempts: number = 20,
+  delayMs: number = 500
+): Promise<string | null> {
+  console.log("[Spotify API] Waiting for device to appear in device list:", deviceId.substring(0, 8));
+  
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      const response = await fetch(`${SPOTIFY_API_BASE}/me/player/devices`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        
+        // First, try exact match
+        const exactMatch = data.devices?.find((d: any) => d.id === deviceId);
+        if (exactMatch) {
+          console.log("[Spotify API] Device found (exact match):", {
+            id: exactMatch.id.substring(0, 8),
+            name: exactMatch.name,
+            is_active: exactMatch.is_active,
+            type: exactMatch.type,
+          });
+          return exactMatch.id;
+        }
+        
+        // If no exact match, try to find by name (most recent "Hitster Player" device)
+        // This handles cases where SDK device_id doesn't match API device_id
+        const nameMatches = data.devices?.filter((d: any) => 
+          d.name?.includes(playerName) || d.name?.startsWith("Hitster Player")
+        ) || [];
+        
+        if (nameMatches.length > 0) {
+          // Sort by most recent (devices are typically ordered by most recent first)
+          const mostRecent = nameMatches[0];
+          console.log("[Spotify API] Device found by name (SDK device_id may differ):", {
+            sdkDeviceId: deviceId.substring(0, 8),
+            apiDeviceId: mostRecent.id.substring(0, 8),
+            name: mostRecent.name,
+            is_active: mostRecent.is_active,
+            type: mostRecent.type,
+          });
+          return mostRecent.id;
+        }
+        
+        if (attempt % 10 === 0) {
+          console.log(`[Spotify API] Device not found yet (attempt ${attempt + 1}/${maxAttempts}). Available devices:`, 
+            data.devices?.map((d: any) => ({ id: d.id.substring(0, 8), name: d.name })) || []);
+        }
+      }
+    } catch (err) {
+      console.warn("[Spotify API] Error checking devices:", err);
+    }
+
+    if (attempt < maxAttempts - 1) {
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
+
+  console.error("[Spotify API] Device never appeared in device list");
+  return null;
+}
+
+/**
+ * Wait for device to be available AND active in Spotify's device list
+ * This is needed because Web Playback SDK devices may take a moment to appear and become active
+ */
+export async function waitForActiveDevice(
+  deviceId: string,
+  accessToken: string,
+  maxAttempts: number = 10,
+  delayMs: number = 500
+): Promise<boolean> {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      const response = await fetch(`${SPOTIFY_API_BASE}/me/player/devices`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const device = data.devices?.find((d: any) => d.id === deviceId);
+        if (device?.is_active) {
+          console.log("[Spotify API] Device is active");
+          return true;
+        }
+      }
+    } catch (err) {
+      console.warn("[Spotify API] Error checking device:", err);
+    }
+
+    if (attempt < maxAttempts - 1) {
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
+
+  return false;
+}
+
+/**
  * Transfer playback to host device
+ * This makes the device active so it can receive playback commands
+ * The device must exist in the device list (but doesn't need to be active yet)
  */
 export async function transferToHostDevice(
   deviceId: string,
-  accessToken: string
+  accessToken: string,
+  requireActive: boolean = false
 ): Promise<void> {
-  if (!accessToken) {
-    throw new Error("Access token is required to transfer playback");
+  if (requireActive) {
+    const deviceActive = await waitForActiveDevice(deviceId, accessToken, 5, 500);
+    if (!deviceActive) {
+      throw new Error("Device is not active");
+    }
   }
-  
+
   const response = await fetch(`${SPOTIFY_API_BASE}/me/player`, {
     method: "PUT",
     headers: {
@@ -24,16 +138,26 @@ export async function transferToHostDevice(
     },
     body: JSON.stringify({
       device_ids: [deviceId],
-      play: false, // Don't auto-play, just transfer
+      play: false,
     }),
   });
 
   if (!response.ok) {
     const errorText = await response.text();
-    if (response.status === 401) {
-      throw new Error("Spotify authentication expired. Please reconnect to Spotify.");
+    let errorData;
+    try {
+      errorData = JSON.parse(errorText);
+    } catch {
+      errorData = { error: { message: errorText } };
     }
-    throw new Error(`Failed to transfer playback: ${response.status} ${errorText}`);
+
+    if (response.status === 401) {
+      throw new Error("Spotify authentication expired");
+    }
+    if (response.status === 404) {
+      throw new Error(`Device not found: ${errorData.error?.message || errorText}`);
+    }
+    throw new Error(`Transfer failed: ${response.status} ${errorData.error?.message || errorText}`);
   }
 }
 
@@ -43,19 +167,39 @@ export async function transferToHostDevice(
 export async function playTrack(
   trackUri: string,
   positionMs: number,
-  accessToken: string
+  accessToken: string,
+  deviceId: string
 ): Promise<void> {
   if (!accessToken) {
     throw new Error("Access token is required to play track");
   }
   
-  // First transfer to device, then play
-  const deviceId = await getCurrentDeviceId(accessToken);
-  if (deviceId) {
-    await transferToHostDevice(deviceId, accessToken);
+  if (!deviceId) {
+    throw new Error("Device ID is required to play track");
   }
 
-  const response = await fetch(`${SPOTIFY_API_BASE}/me/player/play`, {
+  // Device should already be active from activation step
+  // Verify device is active, but if not, try to transfer first (device may have gone inactive)
+  let deviceActive = await waitForActiveDevice(deviceId, accessToken, 2, 500);
+  if (!deviceActive) {
+    // Device might have gone inactive - try transferring again
+    console.log("[Spotify API] Device not active, attempting transfer before playback...");
+    try {
+      await transferToHostDevice(deviceId, accessToken, false);
+      // Wait a moment for transfer to complete
+      await new Promise(resolve => setTimeout(resolve, 500));
+      deviceActive = await waitForActiveDevice(deviceId, accessToken, 3, 500);
+    } catch (transferErr) {
+      console.warn("[Spotify API] Transfer before playback failed:", transferErr);
+    }
+    
+    if (!deviceActive) {
+      throw new Error("Device is not active. Please activate the device first.");
+    }
+  }
+
+  // Play track with device_id in query parameter
+  const response = await fetch(`${SPOTIFY_API_BASE}/me/player/play?device_id=${deviceId}`, {
     method: "PUT",
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -69,11 +213,24 @@ export async function playTrack(
 
   if (!response.ok) {
     const errorText = await response.text();
+    console.error("[Spotify API] Play failed:", {
+      status: response.status,
+      statusText: response.statusText,
+      error: errorText,
+    });
     if (response.status === 401) {
       throw new Error("Spotify authentication expired. Please reconnect to Spotify.");
     }
+    if (response.status === 403) {
+      throw new Error("Spotify playback forbidden. Make sure you have Premium and the device is active.");
+    }
+    if (response.status === 404) {
+      throw new Error("No active device found. Make sure the Spotify player is ready and connected.");
+    }
     throw new Error(`Failed to play track: ${response.status} ${errorText}`);
   }
+
+  console.log("[Spotify API] Successfully started playback");
 }
 
 /**
@@ -194,26 +351,182 @@ export async function checkPremium(accessToken: string): Promise<boolean> {
   }
 }
 
+
 /**
- * Get current device ID from available devices
+ * Get user's playlists
  */
-async function getCurrentDeviceId(accessToken: string): Promise<string | null> {
-  try {
-    const response = await fetch(`${SPOTIFY_API_BASE}/me/player/devices`, {
+export async function getUserPlaylists(
+  accessToken: string,
+  limit: number = 50,
+  offset: number = 0
+): Promise<{
+  items: Array<{
+    id: string;
+    name: string;
+    owner: { display_name: string };
+    tracks: { total: number };
+    images: Array<{ url: string }>;
+  }>;
+  total: number;
+  next: string | null;
+}> {
+  if (!accessToken) {
+    throw new Error("Access token is required");
+  }
+
+  const response = await fetch(
+    `${SPOTIFY_API_BASE}/me/playlists?limit=${limit}&offset=${offset}`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    }
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    if (response.status === 401) {
+      throw new Error("Spotify authentication expired. Please reconnect to Spotify.");
+    }
+    throw new Error(`Failed to fetch playlists: ${response.status} ${errorText}`);
+  }
+
+  return await response.json();
+}
+
+/**
+ * Get all tracks from a playlist (handles pagination)
+ */
+export async function getPlaylistTracks(
+  accessToken: string,
+  playlistId: string
+): Promise<Array<{
+  track: {
+    id: string;
+    uri: string;
+    name: string;
+    artists: Array<{ name: string }>;
+    album: {
+      name: string;
+      release_date: string;
+      images: Array<{ url: string }>;
+    };
+  } | null;
+}>> {
+  if (!accessToken) {
+    throw new Error("Access token is required");
+  }
+
+  const allTracks: Array<{
+    track: {
+      id: string;
+      uri: string;
+      name: string;
+      artists: Array<{ name: string }>;
+      album: {
+        name: string;
+        release_date: string;
+        images: Array<{ url: string }>;
+      };
+    } | null;
+  }> = [];
+
+  let url = `${SPOTIFY_API_BASE}/playlists/${playlistId}/tracks?limit=50`;
+  let hasMore = true;
+
+  while (hasMore) {
+    const response = await fetch(url, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
     });
 
     if (!response.ok) {
-      return null;
+      const errorText = await response.text();
+      if (response.status === 401) {
+        throw new Error("Spotify authentication expired. Please reconnect to Spotify.");
+      }
+      throw new Error(`Failed to fetch playlist tracks: ${response.status} ${errorText}`);
     }
 
     const data = await response.json();
-    const activeDevice = data.devices?.find((device: any) => device.is_active);
-    return activeDevice?.id || null;
-  } catch {
+    allTracks.push(...data.items);
+
+    if (data.next) {
+      url = data.next;
+    } else {
+      hasMore = false;
+    }
+  }
+
+  // Filter out null tracks (removed tracks)
+  return allTracks.filter((item) => item.track !== null);
+}
+
+/**
+ * Extract release year from Spotify release_date field
+ * Handles formats: "YYYY", "YYYY-MM", "YYYY-MM-DD"
+ */
+export function extractReleaseYear(releaseDate: string | null | undefined): number | null {
+  if (!releaseDate) {
     return null;
   }
+
+  // Extract year from various formats
+  const yearMatch = releaseDate.match(/^(\d{4})/);
+  if (yearMatch) {
+    const year = parseInt(yearMatch[1], 10);
+    // Validate year is reasonable
+    if (year >= 1900 && year <= 2100) {
+      return year;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Get track metadata including release year
+ * This processes playlist tracks and extracts metadata
+ */
+export interface TrackMetadata {
+  trackUri: string;
+  name: string;
+  artist: string;
+  releaseYear: number | null;
+  albumArt?: string;
+}
+
+export function processPlaylistTracks(
+  playlistTracks: Array<{
+    track: {
+      id: string;
+      uri: string;
+      name: string;
+      artists: Array<{ name: string }>;
+      album: {
+        name: string;
+        release_date: string;
+        images: Array<{ url: string }>;
+      };
+    } | null;
+  }>
+): TrackMetadata[] {
+  return playlistTracks
+    .filter((item) => item.track !== null)
+    .map((item) => {
+      const track = item.track!;
+      const artist = track.artists.map((a) => a.name).join(", ");
+      const releaseYear = extractReleaseYear(track.album.release_date);
+      const albumArt = track.album.images?.[0]?.url;
+
+      return {
+        trackUri: track.uri,
+        name: track.name,
+        artist,
+        releaseYear,
+        albumArt,
+      };
+    });
 }
 

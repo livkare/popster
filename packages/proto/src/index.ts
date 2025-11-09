@@ -126,3 +126,9 @@ export function isDeviceRegisteredMessage(
 ): msg is Extract<Message, { type: "DEVICE_REGISTERED" }> {
   return msg.type === "DEVICE_REGISTERED";
 }
+
+export function isPlaylistSelectedMessage(
+  msg: Message
+): msg is Extract<Message, { type: "PLAYLIST_SELECTED" }> {
+  return msg.type === "PLAYLIST_SELECTED";
+}

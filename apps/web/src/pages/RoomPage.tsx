@@ -278,7 +278,7 @@ export function RoomPage() {
   const showLobby = !gameState || gameState.status === "lobby";
   const showGame = gameState && (gameState.status === "playing" || gameState.status === "round_summary" || gameState.status === "finished");
 
-  // Debug info for RoomPage
+  // Debug info for RoomPage (unused but kept for debugging)
   const debugInfo = {
     hasJoined,
     myPlayerId,
@@ -289,6 +289,7 @@ export function RoomPage() {
     playerName,
     playersCount: players.length,
   };
+  void debugInfo; // Explicitly mark as intentionally unused
 
   return (
     <Layout>

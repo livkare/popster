@@ -27,6 +27,7 @@ export interface SpotifyPlayer {
   pause(): Promise<void>;
   resume(): Promise<void>;
   seek(positionMs: number): Promise<void>;
+  activateElement(): Promise<void>; // Critical: Activates the device for playback (handles autoplay restrictions)
   addListener(event: string, callback: (state: any) => void): void;
   removeListener(event: string, callback: (state: any) => void): void;
   on(event: string, callback: (state: any) => void): void;
@@ -99,8 +100,11 @@ export async function initializePlayer(
     throw new Error("Spotify SDK not loaded");
   }
 
+  // Use unique player name to avoid conflicts with multiple instances
+  const uniquePlayerName = `${playerName} (${Date.now()})`;
+  
   const player = new window.Spotify.Player({
-    name: playerName,
+    name: uniquePlayerName,
     getOAuthToken: (callback) => {
       callback(token);
     },
@@ -114,7 +118,7 @@ export async function initializePlayer(
   const deviceId = await new Promise<string>((resolve, reject) => {
     const timeout = setTimeout(() => {
       reject(new Error("Timeout waiting for device to be ready"));
-    }, 10000); // 10 second timeout
+    }, 10000);
 
     player.addListener("ready", ({ device_id }: { device_id: string }) => {
       clearTimeout(timeout);
@@ -122,7 +126,7 @@ export async function initializePlayer(
     });
 
     player.addListener("not_ready", ({ device_id }: { device_id: string }) => {
-      console.warn("Device went offline:", device_id);
+      console.warn("[Spotify Player] Device went offline:", device_id);
     });
 
     player.addListener("authentication_error", ({ message }: { message: string }) => {
@@ -136,7 +140,7 @@ export async function initializePlayer(
     });
 
     player.addListener("playback_error", ({ message }: { message: string }) => {
-      console.error("Playback error:", message);
+      console.error("[Spotify Player] Playback error:", message);
     });
   });
 

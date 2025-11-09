@@ -7,6 +7,7 @@ import { logger } from "./logger.js";
 import { roomManager } from "./room/room-manager.js";
 import { handleLeave } from "./room/handlers.js";
 import { createMessage, validateMessage } from "@hitster/proto";
+import { getPlayerModel } from "./room/handlers.js";
 
 /**
  * Handle WebSocket connection lifecycle.
@@ -72,26 +73,58 @@ export async function handleWebSocket(
 
   // Handle connection close
   socket.on("close", async (code: number, reason: Buffer) => {
-    // Clean up room association if player was in a room
-    const roomId = roomManager.getRoomForConnection(connectionId);
-    if (roomId) {
-      // Handle player leave (this will remove from DB and broadcast)
-      // Note: We pass empty playerId since handleLeave looks up by socketId
-      try {
-        await handleLeave(connectionId, socket, { playerId: "" });
-      } catch (error) {
-        logger.error(
+    // Mark player as disconnected instead of removing them
+    const playerModel = getPlayerModel();
+    if (playerModel) {
+      const player = playerModel.getPlayerBySocketId(connectionId);
+      if (player) {
+        // Mark as disconnected but keep in database
+        playerModel.markPlayerDisconnected(player.id);
+        logger.info(
           {
             connectionId,
-            error: error instanceof Error ? error.message : String(error),
+            playerId: player.id,
+            roomId: player.roomId,
           },
-          "Error during connection close cleanup"
+          "Player marked as disconnected"
         );
-        // Still try to disassociate even if leave handler failed
-        roomManager.disassociateConnection(connectionId);
+
+        // Broadcast updated room state with disconnected player
+        const roomId = player.roomId;
+        const players = playerModel.getRoomPlayers(roomId);
+        const { getRoomModel } = await import("./room/handlers.js");
+        const roomModel = getRoomModel();
+        if (roomModel) {
+          const room = roomModel.getRoomById(roomId);
+          if (room) {
+            const { gameStateManager } = await import("./game/game-state-manager.js");
+            const currentGameState = gameStateManager.getGameState(roomId);
+            const roomStateResponse = createMessage("ROOM_STATE", {
+              roomKey: room.roomKey,
+              players: players.map((p) => ({
+                id: p.id,
+                name: p.name,
+                avatar: p.avatar,
+                connected: p.connected,
+              })),
+              gameState: currentGameState
+                ? {
+                    status: currentGameState.status,
+                    currentRound: currentGameState.currentRound,
+                    currentTrack:
+                      currentGameState.rounds[currentGameState.currentRound]?.currentCard.trackUri,
+                  }
+                : undefined,
+            });
+            roomManager.broadcastToRoom(roomId, roomStateResponse);
+          }
+        }
       }
-    } else {
-      // Just disassociate if not in a room
+    }
+
+    // Clean up room association
+    const roomId = roomManager.getRoomForConnection(connectionId);
+    if (roomId) {
       roomManager.disassociateConnection(connectionId);
     }
 

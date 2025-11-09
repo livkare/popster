@@ -6,11 +6,12 @@ import {
   type Challenge,
   type Reveal,
 } from "@hitster/proto";
-import { startRound, placeCard, challengePlacement, revealYear } from "@hitster/engine";
+import { startRound, placeCard, challengePlacement, revealYear, joinPlayer } from "@hitster/engine";
 import { roomManager } from "../room/room-manager.js";
 import { gameStateManager } from "./game-state-manager.js";
 import { logger } from "../logger.js";
 import type { RoomModel } from "../db/models.js";
+import { v4 as uuidv4 } from "uuid";
 
 /**
  * Room model (will be initialized by server).
@@ -26,7 +27,7 @@ export function initializeGameHandlers(rm: RoomModel): void {
 
 /**
  * Handle START_ROUND message.
- * Starts a new round with the specified track.
+ * Starts a new round with a track from the playlist (or specified track if provided).
  */
 export async function handleStartRound(
   connectionId: string,
@@ -34,7 +35,7 @@ export async function handleStartRound(
   payload: StartRound
 ): Promise<void> {
   try {
-    const { trackUri } = payload;
+    let { trackUri } = payload;
 
     // Get room for connection
     const roomId = roomManager.getRoomForConnection(connectionId);
@@ -60,15 +61,114 @@ export async function handleStartRound(
       return;
     }
 
-    // Validate players exist
-    if (gameState.players.length === 0) {
+    // Validate players exist (skip in dev mode)
+    // Dev mode is enabled unless explicitly in production
+    // Check both NODE_ENV and if it's undefined/empty (default to dev mode)
+    const nodeEnv = process.env.NODE_ENV;
+    const devMode = !nodeEnv || nodeEnv !== "production";
+    logger.info(
+      {
+        connectionId,
+        roomId,
+        nodeEnv: nodeEnv || "(undefined/empty)",
+        devMode,
+        playersCount: gameState.players.length,
+      },
+      "Checking player requirement for start round"
+    );
+    if (!devMode && gameState.players.length === 0) {
       roomManager.sendError(connectionId, "NO_PLAYERS", "Cannot start round with no players");
       return;
     }
 
+    // If no trackUri provided, try to get from playlist
+    if (!trackUri) {
+      // Check if playlist tracks are initialized
+      const remainingCount = gameStateManager.getRemainingTrackCount(roomId);
+      if (remainingCount === 0) {
+        // Try to initialize from database
+        const room = roomModel?.getRoomById(roomId);
+        if (room?.playlistData) {
+          try {
+            const tracks = JSON.parse(room.playlistData) as Array<{
+              trackUri: string;
+              name: string;
+              artist: string;
+              releaseYear: number | null;
+              albumArt?: string;
+            }>;
+            gameStateManager.initializePlaylistTracks(roomId, tracks);
+          } catch (error) {
+            logger.error(
+              {
+                roomId,
+                error: error instanceof Error ? error.message : String(error),
+              },
+              "Failed to parse playlist data"
+            );
+            roomManager.sendError(
+              connectionId,
+              "PLAYLIST_NOT_LOADED",
+              "Failed to load playlist tracks. Please select a playlist first."
+            );
+            return;
+          }
+        } else {
+          roomManager.sendError(
+            connectionId,
+            "NO_PLAYLIST",
+            "No playlist selected. Please select a playlist before starting the game."
+          );
+          return;
+        }
+      }
+
+      // Get next track from playlist
+      const nextTrack = gameStateManager.getNextTrack(roomId);
+      if (!nextTrack) {
+        roomManager.sendError(
+          connectionId,
+          "NO_TRACKS_REMAINING",
+          "No tracks remaining in playlist"
+        );
+        return;
+      }
+      trackUri = nextTrack.trackUri;
+    }
+
+    // In dev mode, add a dummy player if there are no players
+    let gameStateToUse = gameState;
+    if (devMode && gameState.players.length === 0) {
+      try {
+        gameStateToUse = joinPlayer(gameState, {
+          id: uuidv4(), // Use valid UUID format
+          name: "Dev Player",
+          avatar: "🎮",
+          tokens: gameState.startingTokens,
+          score: 0,
+        });
+        // Update the game state with the dummy player
+        gameStateManager.setGameState(roomId, gameStateToUse);
+        logger.info({ roomId }, "Added dummy player for dev mode");
+      } catch (error) {
+        logger.warn(
+          {
+            roomId,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          "Failed to add dummy player in dev mode"
+        );
+      }
+    }
+
     // Start round using engine
     const card = { trackUri, revealed: false };
-    const updatedState = startRound(gameState, card);
+    const updatedState = startRound(gameStateToUse, card);
+
+    // Consume the track from playlist (if we used one)
+    if (!payload.trackUri) {
+      gameStateManager.consumeTrack(roomId);
+    }
 
     // Update game state
     gameStateManager.setGameState(roomId, updatedState);
@@ -85,6 +185,16 @@ export async function handleStartRound(
     const room = roomModel?.getRoomById(roomId);
     const roomKey = room?.roomKey || "";
 
+    // Get players from database to include connection status
+    const { getPlayerModel } = await import("../room/handlers.js");
+    const playerModel = getPlayerModel();
+    const dbPlayers = playerModel ? playerModel.getRoomPlayers(roomId) : [];
+    
+    // Create a map of player connection status
+    const playerConnectionMap = new Map(
+      dbPlayers.map((p) => [p.id, p.connected])
+    );
+
     // Broadcast updated ROOM_STATE
     const roomStateMessage = createMessage("ROOM_STATE", {
       roomKey,
@@ -92,6 +202,7 @@ export async function handleStartRound(
         id: p.id,
         name: p.name,
         avatar: p.avatar,
+        connected: playerConnectionMap.get(p.id) ?? true, // Default to connected if not found
       })),
       gameState: {
         status: updatedState.status,

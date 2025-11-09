@@ -472,57 +472,7 @@ Send to server → Ready to play → On START_SONG → Play on Spotify
 
 ---
 
-## Phase 9: PWA Features & Offline Support
-
-**Goal**: Make app installable and work offline for lobby/UI
-
-**Deliverables**:
-
-1. **Service Worker** (Workbox):
-   - Precaching: Shell HTML, CSS, JS bundles
-   - Runtime caching: Static assets (images, fonts)
-   - **NO caching of Spotify audio or API responses**
-   - Offline fallback: Show offline message for game, lobby works offline
-2. **PWA Manifest**:
-   - App name, icons (multiple sizes)
-   - Display mode: `standalone`
-   - Theme colors
-   - Start URL
-3. **Install Prompt**:
-   - Custom install button (for supported browsers)
-   - Show install banner on mobile
-4. **Offline Detection**:
-   - Show connection status indicator
-   - Queue messages when offline, send when reconnected
-5. **Performance Optimization**:
-   - Code splitting (route-based)
-   - Lazy loading for non-critical components
-   - Image optimization (WebP with fallbacks)
-   - Bundle size monitoring (target: ≤ 2.0 MB gzipped)
-
-**Testing Strategy**:
-
-- ✅ Integration tests: Service worker registers correctly
-- ✅ Integration tests: Assets are precached
-- ✅ E2E tests: App installs on mobile device
-- ✅ E2E tests: Offline mode works for lobby
-- ✅ Performance tests: Bundle size is under budget
-- ✅ Lighthouse: PWA score > 90
-
-**Acceptance Criteria**:
-
-- [ ] App installs on iOS and Android
-- [ ] Service worker caches shell and static assets
-- [ ] Lobby works offline (can view players, but can't play)
-- [ ] Bundle size is ≤ 2.0 MB gzipped
-- [ ] Lighthouse PWA score > 90
-- [ ] Install prompt appears on supported browsers
-
-**Dependencies**: Phase 8 (game UI)
-
----
-
-## Phase 10: Polish, Edge Cases & QA
+## Phase 9: Polish, Edge Cases & QA
 
 **Goal**: Handle edge cases, improve UX, and ensure production readiness
 

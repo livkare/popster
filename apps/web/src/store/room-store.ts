@@ -6,6 +6,13 @@ interface Player {
   id: string;
   name: string;
   avatar: string;
+  connected?: boolean;
+}
+
+interface SelectedPlaylist {
+  id: string;
+  name: string;
+  trackCount: number;
 }
 
 interface RoomState {
@@ -16,6 +23,7 @@ interface RoomState {
   isHost: boolean;
   gameMode: string | null;
   roundSummary: RoundSummary | null;
+  selectedPlaylist: SelectedPlaylist | null;
 }
 
 interface RoomActions {
@@ -24,6 +32,7 @@ interface RoomActions {
   updateGameState: (gameState: GameState | null) => void;
   setIsHost: (isHost: boolean) => void;
   setRoundSummary: (summary: RoundSummary | null) => void;
+  setPlaylist: (playlist: SelectedPlaylist | null) => void;
   reset: () => void;
 }
 
@@ -37,6 +46,7 @@ const initialState: RoomState = {
   isHost: false,
   gameMode: null,
   roundSummary: null,
+  selectedPlaylist: null,
 };
 
 export const useRoomStore = create<RoomStore>((set) => ({
@@ -46,6 +56,7 @@ export const useRoomStore = create<RoomStore>((set) => ({
   updateGameState: (gameState) => set({ gameState }),
   setIsHost: (isHost) => set({ isHost }),
   setRoundSummary: (summary) => set({ roundSummary: summary }),
+  setPlaylist: (playlist) => set({ selectedPlaylist: playlist }),
   reset: () => set(initialState),
 }));
 

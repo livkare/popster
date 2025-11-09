@@ -1,5 +1,5 @@
 import type { WebSocket } from "ws";
-import { createMessage, type CreateRoom, type JoinRoom, type Leave } from "@hitster/proto";
+import { createMessage, type CreateRoom, type JoinRoom, type Leave, type SelectPlaylist } from "@hitster/proto";
 import { joinPlayer, removePlayer, type GameMode } from "@hitster/engine";
 import { roomManager } from "./room-manager.js";
 import { RoomModel, PlayerModel, type Room, type Player } from "../db/models.js";
@@ -124,6 +124,7 @@ export async function handleJoinRoom(
           id: p.id,
           name: p.name,
           avatar: p.avatar,
+          connected: p.connected,
         })),
       });
       
@@ -136,6 +137,7 @@ export async function handleJoinRoom(
           id: p.id,
           name: p.name,
           avatar: p.avatar,
+          connected: p.connected,
         })),
         gameState: currentGameState
           ? {
@@ -267,6 +269,7 @@ export async function handleJoinRoom(
           id: p.id,
           name: p.name,
           avatar: p.avatar,
+          connected: p.connected,
         })),
       });
       
@@ -279,6 +282,7 @@ export async function handleJoinRoom(
           id: p.id,
           name: p.name,
           avatar: p.avatar,
+          connected: p.connected,
         })),
         gameState: updatedGameState
           ? {
@@ -384,6 +388,7 @@ export async function handleJoinRoom(
         id: p.id,
         name: p.name,
         avatar: p.avatar,
+        connected: p.connected,
       })),
     });
 
@@ -396,6 +401,7 @@ export async function handleJoinRoom(
         id: p.id,
         name: p.name,
         avatar: p.avatar,
+        connected: p.connected,
       })),
       gameState: currentGameState
         ? {
@@ -505,6 +511,7 @@ export async function handleLeave(
         id: p.id,
         name: p.name,
         avatar: p.avatar,
+        connected: p.connected,
       })),
       gameState: currentGameState
         ? {
@@ -535,6 +542,95 @@ export async function handleLeave(
       },
       "Error handling player leave"
     );
+  }
+}
+
+/**
+ * Handle SELECT_PLAYLIST message.
+ * Only the host (connection that created the room, not a player) can select a playlist.
+ */
+export async function handleSelectPlaylist(
+  connectionId: string,
+  socket: WebSocket,
+  payload: SelectPlaylist
+): Promise<void> {
+  try {
+    const { playlistId, playlistName, tracks } = payload;
+
+    // Validate minimum track count
+    if (tracks.length < 10) {
+      roomManager.sendError(
+        connectionId,
+        "INSUFFICIENT_TRACKS",
+        "Playlist must have at least 10 tracks"
+      );
+      return;
+    }
+
+    // Get room for connection
+    const roomId = roomManager.getRoomForConnection(connectionId);
+    if (!roomId) {
+      roomManager.sendError(connectionId, "NOT_IN_ROOM", "You must be in a room to select a playlist");
+      return;
+    }
+
+    // Verify connection is the host (not a player)
+    // Host is the connection that created the room but doesn't have a playerId
+    const metadata = connectionManager.getConnection(connectionId);
+    if (!metadata) {
+      roomManager.sendError(connectionId, "CONNECTION_NOT_FOUND", "Connection not found");
+      return;
+    }
+
+    // Check if this connection is a player (if so, they're not the host)
+    const player = playerModel.getPlayerBySocketId(connectionId);
+    if (player) {
+      roomManager.sendError(
+        connectionId,
+        "NOT_HOST",
+        "Only the host can select a playlist"
+      );
+      return;
+    }
+
+    // Store playlist data in database
+    const playlistDataJson = JSON.stringify(tracks);
+    roomModel.updatePlaylist(roomId, playlistId, playlistDataJson);
+
+    // Get room info
+    const room = roomModel.getRoomById(roomId);
+    if (!room) {
+      roomManager.sendError(connectionId, "ROOM_NOT_FOUND", "Room not found");
+      return;
+    }
+
+    // Broadcast PLAYLIST_SELECTED to all room participants
+    const playlistSelectedMessage = createMessage("PLAYLIST_SELECTED", {
+      playlistId,
+      playlistName,
+      trackCount: tracks.length,
+    });
+    roomManager.broadcastToRoom(roomId, playlistSelectedMessage);
+
+    logger.info(
+      {
+        connectionId,
+        roomId,
+        playlistId,
+        playlistName,
+        trackCount: tracks.length,
+      },
+      "Playlist selected for room"
+    );
+  } catch (error) {
+    logger.error(
+      {
+        connectionId,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      "Failed to select playlist"
+    );
+    roomManager.sendError(connectionId, "SELECT_PLAYLIST_FAILED", "Failed to select playlist");
   }
 }
 

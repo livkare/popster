@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { Layout } from "../components/Layout.js";
 import { useWebSocket } from "../hooks/useWebSocket.js";
@@ -7,10 +7,12 @@ import { useSpotifyPlayer } from "../hooks/useSpotifyPlayer.js";
 import { useRoomStore, useSpotifyStore } from "../store/index.js";
 import { LobbyScreen } from "../components/game/LobbyScreen.js";
 import { GameScreen } from "../components/game/GameScreen.js";
+import { PlaylistSelector } from "../components/PlaylistSelector.js";
+import { PlaylistTracksPreview } from "../components/PlaylistTracksPreview.js";
 import { createMessage } from "@hitster/proto";
 import type { Message } from "@hitster/proto";
 import type { GameState } from "@hitster/engine";
-import { checkPremium } from "../lib/spotify-api.js";
+import { checkPremium, getPlaylistTracks, processPlaylistTracks } from "../lib/spotify-api.js";
 import { saveRoomState, getRoomState, clearRoomState } from "../lib/room-storage.js";
 import { isValidRoomKeyFormat } from "../lib/room-validation.js";
 import { InvalidRoomKey } from "../components/InvalidRoomKey.js";
@@ -23,6 +25,7 @@ interface GameContentProps {
   isAuthenticated: boolean;
   isPremium: boolean | null;
   isReady: boolean;
+  isActivated: boolean;
   onStartGame: () => void;
   sendMessage: (message: ReturnType<typeof createMessage>) => void;
 }
@@ -35,6 +38,7 @@ function GameContent({
   isAuthenticated,
   isPremium,
   isReady,
+  isActivated,
   onStartGame,
   sendMessage,
 }: GameContentProps) {
@@ -42,13 +46,14 @@ function GameContent({
   const showGame = gameState && (gameState.status === "playing" || gameState.status === "round_summary" || gameState.status === "finished");
 
   if (showLobby) {
+    const devMode = import.meta.env.DEV;
     return (
-      <LobbyScreen
-        roomKey={roomKey}
-        onStartGame={onStartGame}
-        canStartGame={isAuthenticated && isPremium === true && isReady}
-        startGameDisabled={!isAuthenticated || !isPremium || !isReady || players.length < 2}
-      />
+        <LobbyScreen
+          roomKey={roomKey}
+          onStartGame={onStartGame}
+          canStartGame={isAuthenticated && isPremium === true && isReady && isActivated}
+          startGameDisabled={!isAuthenticated || !isPremium || !isReady || !isActivated || (!devMode && players.length < 1)}
+        />
     );
   }
 
@@ -86,11 +91,24 @@ export function HostPage() {
   const { roomKey } = useParams<{ roomKey: string }>();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { players, gameMode, gameState, roundSummary } = useRoomStore();
+  const { players, gameMode, gameState, roundSummary, selectedPlaylist } = useRoomStore();
   
   // Host does NOT join as a player - they only create/host the room
   // They receive ROOM_STATE broadcasts to see players
   const [startGameError, setStartGameError] = useState<string | null>(null);
+  const [playlistSelectionState, setPlaylistSelectionState] = useState<{
+    step: "select" | "preview" | null;
+    selectedPlaylistId: string | null;
+    selectedPlaylistName: string | null;
+    tracks: any[] | null;
+    loading: boolean;
+  }>({
+    step: null,
+    selectedPlaylistId: null,
+    selectedPlaylistName: null,
+    tracks: null,
+    loading: false,
+  });
 
   // Spotify hooks
   const {
@@ -103,7 +121,7 @@ export function HostPage() {
     logout,
   } = useSpotifyAuth();
 
-  const { deviceId, isReady, isInitializing, handleStartSong } = useSpotifyPlayer();
+  const { deviceId, isReady, isInitializing, isActivated, isActivating, activateDevice, handleStartSong } = useSpotifyPlayer();
 
   // Handle START_SONG messages
   const onStartSong = useCallback(
@@ -162,6 +180,8 @@ export function HostPage() {
         saveRoomState({
           roomKey,
           isHost: true,
+          playerName: "",
+          playerAvatar: "",
         });
       }
     }
@@ -200,16 +220,140 @@ export function HostPage() {
       return;
     }
 
-    if (players.length < 2) {
-      setStartGameError("Need at least 2 players to start the game.");
+    if (!isActivated) {
+      setStartGameError("Spotify player is not activated. Please activate the player first.");
       return;
     }
 
-    // TODO: In a full implementation, this would come from a playlist or track selection
-    // For now, we need a track URI to start the round - this should be selected by the host
-    // or come from a predefined playlist
-    setStartGameError("Track selection not yet implemented. Please select a track to start the game.");
-    return;
+    const devMode = import.meta.env.DEV;
+    if (!devMode && players.length < 1) {
+      setStartGameError("Need at least 1 player to start the game.");
+      return;
+    }
+
+    if (!selectedPlaylist) {
+      setStartGameError("Please select a playlist before starting the game.");
+      return;
+    }
+
+    if (!sendMessage) {
+      setStartGameError("WebSocket not connected");
+      return;
+    }
+
+    // Start the first round - server will use next track from playlist
+    try {
+      const message = createMessage("START_ROUND", {
+        // No trackUri - server will use next track from playlist
+      });
+      sendMessage(message);
+      // Error will be set by server response if something goes wrong
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Failed to start game";
+      setStartGameError(errorMessage);
+    }
+  };
+
+  const handlePlaylistPreview = useCallback(async (playlistId: string, playlistName: string) => {
+    if (!accessToken) {
+      setStartGameError("Access token not available");
+      return;
+    }
+
+    // Set loading state
+    setPlaylistSelectionState({
+      step: "preview",
+      selectedPlaylistId: playlistId,
+      selectedPlaylistName: playlistName,
+      tracks: null,
+      loading: true,
+    });
+
+    try {
+      const rawTracks = await getPlaylistTracks(accessToken, playlistId);
+      const processedTracks = processPlaylistTracks(rawTracks);
+
+      setPlaylistSelectionState({
+        step: "preview",
+        selectedPlaylistId: playlistId,
+        selectedPlaylistName: playlistName,
+        tracks: processedTracks,
+        loading: false,
+      });
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Failed to load playlist tracks";
+      setStartGameError(errorMessage);
+      setPlaylistSelectionState({
+        step: "select",
+        selectedPlaylistId: null,
+        selectedPlaylistName: null,
+        tracks: null,
+        loading: false,
+      });
+    }
+  }, [accessToken]);
+
+  const handlePlaylistSelect = useCallback((playlistId: string, playlistName: string) => {
+    // Immediately start loading the preview
+    handlePlaylistPreview(playlistId, playlistName);
+  }, [handlePlaylistPreview]);
+
+  const handlePlaylistConfirm = async () => {
+    if (!playlistSelectionState.selectedPlaylistId || !playlistSelectionState.selectedPlaylistName || !playlistSelectionState.tracks) {
+      return;
+    }
+
+    const tracksWithYear = playlistSelectionState.tracks.filter(t => t.releaseYear !== null);
+    if (tracksWithYear.length < 10) {
+      setStartGameError("Playlist must have at least 10 tracks with release year information");
+      return;
+    }
+
+    if (!sendMessage) {
+      setStartGameError("WebSocket not connected");
+      return;
+    }
+
+    try {
+      const message = createMessage("SELECT_PLAYLIST", {
+        playlistId: playlistSelectionState.selectedPlaylistId,
+        playlistName: playlistSelectionState.selectedPlaylistName,
+        tracks: playlistSelectionState.tracks,
+      });
+      sendMessage(message);
+
+      // Reset selection state
+      setPlaylistSelectionState({
+        step: null,
+        selectedPlaylistId: null,
+        selectedPlaylistName: null,
+        tracks: null,
+        loading: false,
+      });
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Failed to select playlist";
+      setStartGameError(errorMessage);
+    }
+  };
+
+  const handlePlaylistCancel = () => {
+    setPlaylistSelectionState({
+      step: "select",
+      selectedPlaylistId: null,
+      selectedPlaylistName: null,
+      tracks: null,
+      loading: false,
+    });
+  };
+
+  const handleChangePlaylist = () => {
+    setPlaylistSelectionState({
+      step: "select",
+      selectedPlaylistId: null,
+      selectedPlaylistName: null,
+      tracks: null,
+      loading: false,
+    });
   };
 
   const handleConnectSpotify = () => {
@@ -220,6 +364,8 @@ export function HostPage() {
       saveRoomState({
         roomKey,
         isHost: true,
+        playerName: "",
+        playerAvatar: "",
       });
     }
     // Pass roomKey as state parameter to preserve it through OAuth flow
@@ -258,6 +404,7 @@ export function HostPage() {
               <div>Is Authenticated: <span className={isAuthenticated ? "text-green-600" : "text-red-600"}>{String(isAuthenticated)}</span></div>
               <div>Is Premium: <span className={isPremium === true ? "text-green-600" : isPremium === false ? "text-red-600" : "text-yellow-600"}>{isPremium === null ? "?" : String(isPremium)}</span></div>
               <div>Player Ready: <span className={isReady ? "text-green-600" : "text-red-600"}>{String(isReady)}</span></div>
+              <div>Player Activated: <span className={isActivated ? "text-green-600" : "text-red-600"}>{String(isActivated)}</span></div>
               <div>Device ID: <span className={deviceId ? "text-green-600" : "text-red-600"}>{deviceId ? `${deviceId.substring(0, 8)}...` : "null"}</span></div>
             </div>
           </div>
@@ -352,10 +499,44 @@ export function HostPage() {
                 </div>
               )}
 
-              {!isInitializing && isReady && deviceId && (
+              {!isInitializing && isReady && deviceId && !isActivated && (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 space-y-3">
+                  <div>
+                    <p className="text-sm text-yellow-800 font-medium mb-1">⚠️ Player Ready - Activation Required</p>
+                    <p className="text-xs text-yellow-700 mb-2">
+                      Click the button below to activate the player. This is required for audio playback.
+                    </p>
+                    <p className="text-xs text-yellow-600">Device ID: {deviceId.substring(0, 8)}...</p>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      try {
+                        await activateDevice();
+                      } catch (err) {
+                        console.error("Activation failed:", err);
+                        // Error is already set by activateDevice
+                      }
+                    }}
+                    disabled={isActivating}
+                    className="btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isActivating ? (
+                      <>
+                        <span className="animate-spin rounded-full h-4 w-4 border-b-2 border-white inline-block mr-2"></span>
+                        Activating...
+                      </>
+                    ) : (
+                      "Activate Player"
+                    )}
+                  </button>
+                </div>
+              )}
+
+              {!isInitializing && isReady && deviceId && isActivated && (
                 <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-                  <p className="text-sm text-green-800 font-medium mb-1">✓ Player Ready</p>
+                  <p className="text-sm text-green-800 font-medium mb-1">✓ Player Activated</p>
                   <p className="text-xs text-green-700">Device ID: {deviceId.substring(0, 8)}...</p>
+                  <p className="text-xs text-green-600 mt-1">Ready for playback</p>
                 </div>
               )}
 
@@ -371,6 +552,75 @@ export function HostPage() {
             </div>
           )}
         </div>
+
+        {/* Playlist Selection */}
+        {!isChecking && isAuthenticated && isPremium === true && isReady && isActivated && (
+          <div className="card">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Playing Deck</h3>
+            
+            {selectedPlaylist && playlistSelectionState.step === null && (
+              <div className="space-y-4">
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-green-800">{selectedPlaylist.name}</p>
+                      <p className="text-xs text-green-700">{selectedPlaylist.trackCount} tracks</p>
+                    </div>
+                    <button
+                      onClick={handleChangePlaylist}
+                      className="btn-secondary text-sm"
+                    >
+                      Change Playlist
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {!selectedPlaylist && playlistSelectionState.step === null && (
+              <div className="space-y-4">
+                <p className="text-sm text-gray-600">
+                  Select a Spotify playlist to use as the playing deck. Songs from this playlist will be used during the game.
+                </p>
+                <button
+                  onClick={() => setPlaylistSelectionState({ step: "select", selectedPlaylistId: null, selectedPlaylistName: null, tracks: null, loading: false })}
+                  className="btn-primary w-full"
+                >
+                  Select Playlist
+                </button>
+              </div>
+            )}
+
+            {playlistSelectionState.step === "select" && accessToken && (
+              <div className="space-y-4">
+                <PlaylistSelector
+                  accessToken={accessToken}
+                  onSelect={handlePlaylistSelect}
+                  selectedPlaylistId={selectedPlaylist?.id}
+                />
+              </div>
+            )}
+
+            {playlistSelectionState.step === "preview" && (
+              <div className="space-y-4">
+                {playlistSelectionState.loading || !playlistSelectionState.tracks ? (
+                  <div className="text-center py-8">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto mb-2"></div>
+                    <p className="text-sm text-gray-600">Loading playlist tracks...</p>
+                  </div>
+                ) : playlistSelectionState.selectedPlaylistName ? (
+                  <PlaylistTracksPreview
+                    tracks={playlistSelectionState.tracks}
+                    playlistName={playlistSelectionState.selectedPlaylistName}
+                    onConfirm={handlePlaylistConfirm}
+                    onCancel={handlePlaylistCancel}
+                    loading={playlistSelectionState.loading}
+                  />
+                ) : null}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Room Header - shown for all states */}
         <div className="card">
@@ -415,6 +665,7 @@ export function HostPage() {
           isAuthenticated={isAuthenticated}
           isPremium={isPremium}
           isReady={isReady}
+          isActivated={isActivated}
           onStartGame={handleStartGame}
           sendMessage={sendMessage}
         />
