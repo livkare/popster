@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Game</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="homepage" class="homepage">
+        <div class="content">
+            <h1 class="title">Welcome to the Game</h1>
+            <button id="playButton" class="play-button">TimeMusic</button>
+        </div>
+    </div>
+    <div id="timemusic-page" class="timemusic-page" style="display: none;">
+        <div class="content">
+            <h1 class="title">TimeMusic</h1>
+            <div id="connection-status" class="status-connecting">
+                <div id="connection-text" class="status-text">Connecting to Spotify...</div>
+            </div>
+            <div class="host-section">
+                <div class="qr-section">
+                    <h2 class="section-title">Scan to Join</h2>
+                    <div id="qr-code-container" class="qr-code-container"></div>
+                </div>
+                <div class="players-section">
+                    <h2 class="section-title">Players</h2>
+                    <div id="host-player-list-container" class="player-list-container">
+                        <p class="no-players">Waiting for players to join...</p>
+                    </div>
+                </div>
+            </div>
+            <div class="game-controls">
+                <button id="select-playlist-button" class="play-button">Select Playlist</button>
+                <div id="playlist-status" class="playlist-status" style="display: none;">
+                    <span class="playlist-status-text">Playlist selected</span>
+                </div>
+                <button id="start-game-button" class="play-button" disabled>Start Game</button>
+            </div>
+            <!-- Playlist Selection Modal -->
+            <div id="playlist-modal" class="modal" style="display: none;">
+                <div class="modal-backdrop"></div>
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h2 class="modal-title">Select a Playlist</h2>
+                        <button id="modal-close-button" class="modal-close-button">&times;</button>
+                    </div>
+                    <div id="playlist-modal-body" class="modal-body">
+                        <div id="playlist-loading" class="playlist-loading" style="display: none;">
+                            <p>Loading playlists...</p>
+                        </div>
+                        <div id="playlist-error" class="playlist-error" style="display: none;">
+                            <p id="playlist-error-text"></p>
+                        </div>
+                        <div id="playlist-list" class="playlist-list"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div id="player-join-page" class="player-join-page" style="display: none;">
+        <div class="content">
+            <h1 class="title">Join Game</h1>
+            <div class="join-section">
+                <div class="input-group">
+                    <input 
+                        type="text" 
+                        id="player-name-input" 
+                        class="name-input" 
+                        placeholder="Enter your name"
+                        maxlength="20"
+                    />
+                    <button id="player-join-button" class="join-button">Join</button>
+                </div>
+                <div id="player-status-text" class="status-text"></div>
+            </div>
+        </div>
+    </div>
+    <div id="game-page" class="game-page" style="display: none;">
+        <div class="content">
+            <h1 class="title">TimeMusic Game</h1>
+            <div class="mystery-card-section">
+                <div id="mystery-card" class="mystery-card">
+                    <div class="mystery-card-content">
+                        <div class="mystery-question-mark">?</div>
+                        <div class="mystery-card-info">Mystery Song</div>
+                    </div>
+                </div>
+                <button id="play-mystery-button" class="play-button" disabled>Play</button>
+            </div>
+        </div>
+    </div>
+    <div id="player-game-page" class="player-game-page" style="display: none;">
+        <div class="content">
+            <h1 class="title">TimeMusic Game</h1>
+            <div class="timeline-section">
+                <h2 class="section-title">Your Timeline</h2>
+                <div id="player-timeline" class="timeline-container"></div>
+            </div>
+        </div>
+    </div>
+    <script type="module" src="/src/index.ts"></script>
+</body>
+</html>
+
