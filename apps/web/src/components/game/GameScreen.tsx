@@ -32,7 +32,7 @@ export function GameScreen({
   sendMessage,
   disabled,
 }: GameScreenProps) {
-  const { isHost } = useRoomStore();
+  const { players, isHost } = useRoomStore();
   const { myPlayerId, myTokens } = usePlayerStore();
 
   const currentRound = gameState.rounds[gameState.currentRound];
@@ -42,6 +42,9 @@ export function GameScreen({
   const myPlayer = useMemo(() => {
     return gameState.players.find((p) => p.id === myPlayerId);
   }, [gameState.players, myPlayerId]);
+
+  // Check if it's my turn to place
+  const isMyTurn = currentRound?.currentPlayerId === myPlayerId;
 
   // Check if I can place (haven't placed yet this round)
   const canPlace = useMemo(() => {
@@ -96,15 +99,6 @@ export function GameScreen({
       // TODO: Get year from Spotify API or server
       // For now, we'll need server to provide year
       onReveal();
-    }
-  };
-
-  const handleNextCard = () => {
-    // Only host can skip to next card
-    if (isHost && sendMessage) {
-      // Send START_ROUND without trackUri - server will pick next track from playlist
-      const message = createMessage("START_ROUND", {});
-      sendMessage(message);
     }
   };
 
@@ -239,19 +233,6 @@ export function GameScreen({
           <ReactionPicker disabled={disabled} />
         </div>
       </div>
-
-      {/* Host Controls - Next Card */}
-      {isHost && gameState.status === "playing" && (
-        <div className="card">
-          <button
-            onClick={handleNextCard}
-            disabled={disabled}
-            className="btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Next Card
-          </button>
-        </div>
-      )}
     </div>
   );
 }

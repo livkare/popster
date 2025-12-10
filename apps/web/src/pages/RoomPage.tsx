@@ -16,7 +16,7 @@ export function RoomPage() {
   const navigate = useNavigate();
   const { sendMessage, isConnected } = useWebSocket();
   // IMPORTANT: All hooks must be called unconditionally at the top
-  const { gameState, roundSummary, players } = useRoomStore();
+  const { gameState, roundSummary } = useRoomStore();
   const { myPlayerId } = usePlayerStore();
   const connectionError = useConnectionStore((state) => state.error);
   const [playerName, setPlayerName] = useState("");
@@ -278,44 +278,8 @@ export function RoomPage() {
   const showLobby = !gameState || gameState.status === "lobby";
   const showGame = gameState && (gameState.status === "playing" || gameState.status === "round_summary" || gameState.status === "finished");
 
-  // Debug info for RoomPage (unused but kept for debugging)
-  const debugInfo = {
-    hasJoined,
-    myPlayerId,
-    isConnected,
-    autoJoinAttempted: autoJoinAttemptedRef.current,
-    persistedState: getRoomState(),
-    roomKey,
-    playerName,
-    playersCount: players.length,
-  };
-  void debugInfo; // Explicitly mark as intentionally unused
-
   return (
     <Layout>
-      {/* Debug Info Panel - Always visible in dev */}
-      {(import.meta.env.DEV || localStorage.getItem("hitster-debug") === "true") && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-xs font-mono mb-4">
-          <div className="font-semibold text-yellow-800 mb-2 flex items-center justify-between">
-            <span>🐛 RoomPage Debug</span>
-            <span className="text-yellow-600 font-normal">({new Date().toLocaleTimeString()})</span>
-          </div>
-          <div className="grid grid-cols-2 gap-2 text-yellow-700">
-            <div>Has Joined: <span className={hasJoined ? "text-green-600 font-bold" : "text-red-600 font-bold"}>{String(hasJoined)}</span></div>
-            <div>Player ID: <span className={myPlayerId ? "text-green-600" : "text-red-600"}>{myPlayerId ? `${myPlayerId.substring(0, 8)}...` : "null"}</span></div>
-            <div>WS Connected: <span className={isConnected ? "text-green-600 font-bold" : "text-red-600 font-bold"}>{String(isConnected)}</span></div>
-            <div>Auto Join Attempted: <span className={autoJoinAttemptedRef.current ? "text-yellow-600" : "text-gray-600"}>{String(autoJoinAttemptedRef.current)}</span></div>
-            <div>Players: <span className="text-blue-600 font-bold">{players.length}</span> {players.length > 0 && <span className="text-gray-600">({players.map(p => p.name).join(", ")})</span>}</div>
-            <div>Room Key: <span className="text-blue-600">{roomKey}</span></div>
-            <div>Player Name: <span className="text-blue-600">{playerName || "empty"}</span></div>
-            <div>Game State: <span className="text-blue-600">{gameState?.status || "null"}</span></div>
-            {joinError && <div className="col-span-2 text-red-600">Join Error: {joinError}</div>}
-          </div>
-          <div className="mt-2 pt-2 border-t border-yellow-300 text-yellow-600">
-            <div>Persisted State: {getRoomState() ? `Room: ${getRoomState()?.roomKey}, Name: ${getRoomState()?.playerName || "none"}` : "none"}</div>
-          </div>
-        </div>
-      )}
       <div className="max-w-4xl mx-auto space-y-6">
         {showLobby && (
           <LobbyScreen

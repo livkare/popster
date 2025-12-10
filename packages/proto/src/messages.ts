@@ -34,7 +34,7 @@ export const RevealSchema = z.object({
 });
 
 export const StartRoundSchema = z.object({
-  trackUri: z.string().min(1).optional(),
+  trackUri: z.string().min(1),
 });
 
 export const RoundSummarySchema = z.object({
@@ -75,7 +75,6 @@ export const JoinedSchema = z.object({
       id: z.string().uuid(),
       name: z.string(),
       avatar: z.string(),
-      connected: z.boolean().optional(),
     })
   ),
 });
@@ -90,7 +89,6 @@ export const RoomStateSchema = z.object({
       id: z.string().uuid(),
       name: z.string(),
       avatar: z.string(),
-      connected: z.boolean().optional(),
     })
   ),
   gameState: z
@@ -123,34 +121,6 @@ export const DeviceRegisteredSchema = z.object({
   success: z.boolean(),
 });
 
-export const RequestRoomStateSchema = z.object({
-  roomKey: z.string().length(6),
-});
-
-// ============================================================================
-// Playlist Selection Messages
-// ============================================================================
-
-export const SelectPlaylistSchema = z.object({
-  playlistId: z.string().min(1),
-  playlistName: z.string().min(1),
-  tracks: z.array(
-    z.object({
-      trackUri: z.string().min(1),
-      name: z.string().min(1),
-      artist: z.string().min(1),
-      releaseYear: z.number().int().min(1900).max(2100).nullable(),
-      albumArt: z.string().optional(),
-    })
-  ),
-});
-
-export const PlaylistSelectedSchema = z.object({
-  playlistId: z.string().min(1),
-  playlistName: z.string().min(1),
-  trackCount: z.number().int().positive(),
-});
-
 // ============================================================================
 // Message Envelope - Discriminated Union
 // ============================================================================
@@ -174,9 +144,6 @@ export const MessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("PONG"), payload: PongSchema }),
   z.object({ type: z.literal("REGISTER_DEVICE"), payload: RegisterDeviceSchema }),
   z.object({ type: z.literal("DEVICE_REGISTERED"), payload: DeviceRegisteredSchema }),
-  z.object({ type: z.literal("REQUEST_ROOM_STATE"), payload: RequestRoomStateSchema }),
-  z.object({ type: z.literal("SELECT_PLAYLIST"), payload: SelectPlaylistSchema }),
-  z.object({ type: z.literal("PLAYLIST_SELECTED"), payload: PlaylistSelectedSchema }),
 ]);
 
 // ============================================================================
@@ -201,9 +168,6 @@ export type Error = z.infer<typeof ErrorSchema>;
 export type Pong = z.infer<typeof PongSchema>;
 export type RegisterDevice = z.infer<typeof RegisterDeviceSchema>;
 export type DeviceRegistered = z.infer<typeof DeviceRegisteredSchema>;
-export type RequestRoomState = z.infer<typeof RequestRoomStateSchema>;
-export type SelectPlaylist = z.infer<typeof SelectPlaylistSchema>;
-export type PlaylistSelected = z.infer<typeof PlaylistSelectedSchema>;
 export type Message = z.infer<typeof MessageSchema>;
 
 // ============================================================================

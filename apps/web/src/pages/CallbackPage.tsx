@@ -56,11 +56,6 @@ export function CallbackPage() {
       const success = await handleCallback(code);
       if (success) {
         setStatus("success");
-        
-        // Small delay to ensure tokens are fully saved to IndexedDB and store is updated
-        // This prevents race conditions where HostPage tries to use tokens before they're available
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
         // Get roomKey from multiple sources (in order of preference):
         // 1. OAuth state parameter (most reliable - preserved through redirect)
         // 2. URL state parameter (fallback)
@@ -81,28 +76,11 @@ export function CallbackPage() {
         if (roomKey) {
           localStorage.removeItem("spotify_redirect_room");
           
-          // Get persisted state and ensure it's properly saved after OAuth callback
-          // This is critical because localStorage might have been cleared due to origin mismatch
+          // Try to restore persisted state if available (may be empty due to origin mismatch)
           const persistedState = getRoomState();
           if (persistedState && persistedState.roomKey === roomKey && persistedState.isHost) {
             // State exists and matches - ensure it's saved (may have been lost due to origin mismatch)
-            // This ensures playerName and other state is available for rejoin
             saveRoomState(persistedState);
-            console.log("[CallbackPage] Restored persisted state:", {
-              roomKey: persistedState.roomKey,
-              playerName: persistedState.playerName,
-              hasPlayerId: !!persistedState.playerId,
-            });
-          } else {
-            // If we don't have persisted state but have roomKey, create minimal state
-            // This helps with rejoin even if state was lost
-            console.log("[CallbackPage] No persisted state found, creating minimal state for rejoin");
-            saveRoomState({
-              roomKey,
-              isHost: true,
-              playerName: "", // Will need to be filled in or use fallback
-              playerAvatar: "🎵",
-            });
           }
           
           // Navigate with a query parameter to indicate this is a post-auth redirect
@@ -127,19 +105,6 @@ export function CallbackPage() {
 
   return (
     <Layout>
-      {/* Debug Info Panel - Always visible in dev */}
-      {import.meta.env.DEV && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-xs font-mono mb-4 max-w-md mx-auto">
-          <div className="font-semibold text-yellow-800 mb-2">🐛 CallbackPage Debug</div>
-          <div className="grid grid-cols-2 gap-2 text-yellow-700">
-            <div>Status: <span className="text-blue-600">{status}</span></div>
-            <div>Has Processed: <span className={hasProcessed.current ? "text-green-600" : "text-red-600"}>{String(hasProcessed.current)}</span></div>
-            {errorMessage && (
-              <div className="col-span-2 text-red-600">Error: {errorMessage}</div>
-            )}
-          </div>
-        </div>
-      )}
       <div className="max-w-md mx-auto">
         <div className="card text-center">
           {status === "processing" && (

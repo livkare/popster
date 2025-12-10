@@ -1,19 +1,11 @@
 import { create } from "zustand";
 import type { GameState } from "@hitster/engine";
 import type { RoundSummary } from "@hitster/proto";
-import type { TrackMetadata } from "../lib/spotify-api.js";
 
 interface Player {
   id: string;
   name: string;
   avatar: string;
-  connected?: boolean;
-}
-
-interface SelectedPlaylist {
-  id: string;
-  name: string;
-  trackCount: number;
 }
 
 interface RoomState {
@@ -24,8 +16,6 @@ interface RoomState {
   isHost: boolean;
   gameMode: string | null;
   roundSummary: RoundSummary | null;
-  selectedPlaylist: SelectedPlaylist | null;
-  playlistTracks: TrackMetadata[];
 }
 
 interface RoomActions {
@@ -34,8 +24,6 @@ interface RoomActions {
   updateGameState: (gameState: GameState | null) => void;
   setIsHost: (isHost: boolean) => void;
   setRoundSummary: (summary: RoundSummary | null) => void;
-  setPlaylist: (playlist: SelectedPlaylist | null) => void;
-  setPlaylistTracks: (tracks: TrackMetadata[]) => void;
   reset: () => void;
 }
 
@@ -49,8 +37,6 @@ const initialState: RoomState = {
   isHost: false,
   gameMode: null,
   roundSummary: null,
-  selectedPlaylist: null,
-  playlistTracks: [],
 };
 
 export const useRoomStore = create<RoomStore>((set) => ({
@@ -60,8 +46,6 @@ export const useRoomStore = create<RoomStore>((set) => ({
   updateGameState: (gameState) => set({ gameState }),
   setIsHost: (isHost) => set({ isHost }),
   setRoundSummary: (summary) => set({ roundSummary: summary }),
-  setPlaylist: (playlist) => set({ selectedPlaylist: playlist }),
-  setPlaylistTracks: (tracks) => set({ playlistTracks: tracks }),
   reset: () => set(initialState),
 }));
 

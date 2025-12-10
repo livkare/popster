@@ -1,5 +1,5 @@
 import type { Message } from "@hitster/proto";
-import { validateMessage } from "@hitster/proto";
+import { createMessage, validateMessage } from "@hitster/proto";
 import { WS_URL } from "../config.js";
 
 type MessageHandler = (message: Message) => void;

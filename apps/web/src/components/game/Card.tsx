@@ -13,8 +13,8 @@ interface CardProps {
 }
 
 export function Card({
-  card: _card,
-  slotIndex: _slotIndex,
+  card,
+  slotIndex,
   isRevealed,
   isCorrect,
   year,

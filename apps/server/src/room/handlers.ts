@@ -1,5 +1,5 @@
 import type { WebSocket } from "ws";
-import { createMessage, type CreateRoom, type JoinRoom, type Leave, type SelectPlaylist } from "@hitster/proto";
+import { createMessage, type CreateRoom, type JoinRoom, type Leave } from "@hitster/proto";
 import { joinPlayer, removePlayer, type GameMode } from "@hitster/engine";
 import { roomManager } from "./room-manager.js";
 import { RoomModel, PlayerModel, type Room, type Player } from "../db/models.js";
@@ -19,20 +19,6 @@ let playerModel: PlayerModel;
 export function initializeHandlers(rm: RoomModel, pm: PlayerModel): void {
   roomModel = rm;
   playerModel = pm;
-}
-
-/**
- * Get room model (for use by other modules).
- */
-export function getRoomModel(): RoomModel | undefined {
-  return roomModel;
-}
-
-/**
- * Get player model (for use by other modules).
- */
-export function getPlayerModel(): PlayerModel | undefined {
-  return playerModel;
 }
 
 /**
@@ -124,7 +110,6 @@ export async function handleJoinRoom(
           id: p.id,
           name: p.name,
           avatar: p.avatar,
-          connected: p.connected,
         })),
       });
       
@@ -137,7 +122,6 @@ export async function handleJoinRoom(
           id: p.id,
           name: p.name,
           avatar: p.avatar,
-          connected: p.connected,
         })),
         gameState: currentGameState
           ? {
@@ -221,45 +205,9 @@ export async function handleJoinRoom(
       // Associate connection with room
       roomManager.associateConnection(connectionId, room.id);
       
-      // Ensure player is in game state (in case they were removed during disconnect)
-      const currentGameState = gameStateManager.getGameState(room.id);
-      if (currentGameState) {
-        const playerInGameState = currentGameState.players.find(p => p.id === existingPlayerByName.id);
-        if (!playerInGameState) {
-          // Player not in game state - add them back
-          try {
-            const updatedState = joinPlayer(currentGameState, {
-              id: existingPlayerByName.id,
-              name: existingPlayerByName.name,
-              avatar: existingPlayerByName.avatar,
-              tokens: currentGameState.startingTokens, // Use starting tokens from game mode
-              score: 0,
-            });
-            gameStateManager.setGameState(room.id, updatedState);
-            gameStateManager.persistGameState(room.id, updatedState);
-            logger.info(
-              {
-                roomId: room.id,
-                playerId: existingPlayerByName.id,
-              },
-              "Re-added player to game state after reconnection"
-            );
-          } catch (error) {
-            logger.warn(
-              {
-                roomId: room.id,
-                playerId: existingPlayerByName.id,
-                error: error instanceof Error ? error.message : String(error),
-              },
-              "Failed to re-add player to game state (may already be in game)"
-            );
-          }
-        }
-      }
-      
-      // Get updated players list (after ensuring player is in game state)
+      // Get updated players list
       const players = playerModel.getRoomPlayers(room.id);
-      const updatedGameState = gameStateManager.getGameState(room.id);
+      const currentGameState = gameStateManager.getGameState(room.id);
       
       // Send JOINED response
       const joinedResponse = createMessage("JOINED", {
@@ -269,7 +217,6 @@ export async function handleJoinRoom(
           id: p.id,
           name: p.name,
           avatar: p.avatar,
-          connected: p.connected,
         })),
       });
       
@@ -282,14 +229,13 @@ export async function handleJoinRoom(
           id: p.id,
           name: p.name,
           avatar: p.avatar,
-          connected: p.connected,
         })),
-        gameState: updatedGameState
+        gameState: currentGameState
           ? {
-              status: updatedGameState.status,
-              currentRound: updatedGameState.currentRound,
+              status: currentGameState.status,
+              currentRound: currentGameState.currentRound,
               currentTrack:
-                updatedGameState.rounds[updatedGameState.currentRound]?.currentCard.trackUri,
+                currentGameState.rounds[currentGameState.currentRound]?.currentCard.trackUri,
             }
           : undefined,
       });
@@ -363,23 +309,6 @@ export async function handleJoinRoom(
     // Get updated game state for broadcast
     const currentGameState = gameStateManager.getGameState(room.id);
 
-    // Get all connections in room for debugging
-    const connectionsInRoom = roomManager.getConnectionsInRoom(room.id);
-    logger.info(
-      {
-        roomId: room.id,
-        roomKey: room.roomKey,
-        newPlayerId: player.id,
-        newPlayerName: player.name,
-        totalPlayers: players.length,
-        playerIds: players.map((p) => p.id),
-        playerNames: players.map((p) => p.name),
-        connectionsInRoom: connectionsInRoom.length,
-        connectionIds: connectionsInRoom,
-      },
-      "Player joined room - broadcasting to all connections"
-    );
-
     // Send JOINED response to the new player
     const joinedResponse = createMessage("JOINED", {
       playerId: player.id,
@@ -388,7 +317,6 @@ export async function handleJoinRoom(
         id: p.id,
         name: p.name,
         avatar: p.avatar,
-        connected: p.connected,
       })),
     });
 
@@ -401,7 +329,6 @@ export async function handleJoinRoom(
         id: p.id,
         name: p.name,
         avatar: p.avatar,
-        connected: p.connected,
       })),
       gameState: currentGameState
         ? {
@@ -412,17 +339,6 @@ export async function handleJoinRoom(
           }
         : undefined,
     });
-
-    logger.info(
-      {
-        roomId: room.id,
-        roomKey: room.roomKey,
-        playersCount: players.length,
-        players: players.map((p) => ({ id: p.id, name: p.name })),
-        connectionsToBroadcast: connectionsInRoom.length,
-      },
-      "Broadcasting ROOM_STATE after player join"
-    );
 
     roomManager.broadcastToRoom(room.id, roomStateResponse);
 
@@ -511,7 +427,6 @@ export async function handleLeave(
         id: p.id,
         name: p.name,
         avatar: p.avatar,
-        connected: p.connected,
       })),
       gameState: currentGameState
         ? {
@@ -542,95 +457,6 @@ export async function handleLeave(
       },
       "Error handling player leave"
     );
-  }
-}
-
-/**
- * Handle SELECT_PLAYLIST message.
- * Only the host (connection that created the room, not a player) can select a playlist.
- */
-export async function handleSelectPlaylist(
-  connectionId: string,
-  socket: WebSocket,
-  payload: SelectPlaylist
-): Promise<void> {
-  try {
-    const { playlistId, playlistName, tracks } = payload;
-
-    // Validate minimum track count
-    if (tracks.length < 10) {
-      roomManager.sendError(
-        connectionId,
-        "INSUFFICIENT_TRACKS",
-        "Playlist must have at least 10 tracks"
-      );
-      return;
-    }
-
-    // Get room for connection
-    const roomId = roomManager.getRoomForConnection(connectionId);
-    if (!roomId) {
-      roomManager.sendError(connectionId, "NOT_IN_ROOM", "You must be in a room to select a playlist");
-      return;
-    }
-
-    // Verify connection is the host (not a player)
-    // Host is the connection that created the room but doesn't have a playerId
-    const metadata = connectionManager.getConnection(connectionId);
-    if (!metadata) {
-      roomManager.sendError(connectionId, "CONNECTION_NOT_FOUND", "Connection not found");
-      return;
-    }
-
-    // Check if this connection is a player (if so, they're not the host)
-    const player = playerModel.getPlayerBySocketId(connectionId);
-    if (player) {
-      roomManager.sendError(
-        connectionId,
-        "NOT_HOST",
-        "Only the host can select a playlist"
-      );
-      return;
-    }
-
-    // Store playlist data in database
-    const playlistDataJson = JSON.stringify(tracks);
-    roomModel.updatePlaylist(roomId, playlistId, playlistDataJson);
-
-    // Get room info
-    const room = roomModel.getRoomById(roomId);
-    if (!room) {
-      roomManager.sendError(connectionId, "ROOM_NOT_FOUND", "Room not found");
-      return;
-    }
-
-    // Broadcast PLAYLIST_SELECTED to all room participants
-    const playlistSelectedMessage = createMessage("PLAYLIST_SELECTED", {
-      playlistId,
-      playlistName,
-      trackCount: tracks.length,
-    });
-    roomManager.broadcastToRoom(roomId, playlistSelectedMessage);
-
-    logger.info(
-      {
-        connectionId,
-        roomId,
-        playlistId,
-        playlistName,
-        trackCount: tracks.length,
-      },
-      "Playlist selected for room"
-    );
-  } catch (error) {
-    logger.error(
-      {
-        connectionId,
-        error: error instanceof Error ? error.message : String(error),
-      },
-      "Failed to select playlist"
-    );
-    roomManager.sendError(connectionId, "SELECT_PLAYLIST_FAILED", "Failed to select playlist");
   }
 }
 

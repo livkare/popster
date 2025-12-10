@@ -11,7 +11,6 @@ import {
   isStartRoundMessage,
   isRoundSummaryMessage,
   isDeviceRegisteredMessage,
-  isPlaylistSelectedMessage,
 } from "@hitster/proto";
 import type { GameState, GameMode, Round } from "@hitster/engine";
 import { createGame } from "@hitster/engine";
@@ -22,13 +21,63 @@ import { updatePlayerId } from "../lib/room-storage.js";
  */
 export function useWebSocket(onStartSong?: (message: Message) => void) {
   const { setConnected, setConnecting, setError } = useConnectionStore();
-  const { setRoom, updatePlayers, updateGameState, gameMode, isHost, setPlaylist } = useRoomStore();
+  const { setRoom, updatePlayers, updateGameState, gameMode, isHost } = useRoomStore();
   const { setPlayerId } = usePlayerStore();
   
   // Callback refs for navigation and room creation handlers
   const roomCreatedCallbackRef = useRef<((roomKey: string) => void) | null>(null);
 
-  // Define handleMessage before useEffect to avoid initialization order issues
+  // Connect on mount
+  useEffect(() => {
+    // First, check the actual WebSocket state and sync it with the store
+    // This ensures we have the correct state even if the WebSocket is already connected
+    const currentState = wsManager.getConnectionState();
+    if (currentState === "connected") {
+      setConnected(true);
+      setConnecting(false);
+    } else if (currentState === "connecting") {
+      setConnecting(true);
+      setConnected(false);
+    } else {
+      setConnecting(false);
+      setConnected(false);
+    }
+    
+    setError(null);
+    wsManager.connect();
+
+    // Track if we've ever successfully connected (to distinguish initial failure from reconnection)
+    let hasEverConnected = wsManager.isConnected();
+
+    // Subscribe to connection state changes
+    const unsubscribeConnectionState = wsManager.onConnectionStateChange((connected) => {
+      setConnected(connected);
+      // setConnected already sets connecting: false, so no need to call setConnecting separately
+      if (!connected) {
+        if (hasEverConnected) {
+          // We were connected before, so this is a reconnection scenario
+          setError("Connection lost. Attempting to reconnect...");
+        } else {
+          // Never connected - likely server not running
+          setError("Unable to connect to server. Please make sure the server is running.");
+        }
+      } else {
+        hasEverConnected = true;
+        setError(null);
+      }
+    });
+
+    // Subscribe to messages
+    const unsubscribeMessages = wsManager.onMessage((message: Message) => {
+      handleMessage(message);
+    });
+
+    return () => {
+      unsubscribeConnectionState();
+      unsubscribeMessages();
+    };
+  }, [setConnected, setConnecting, setError]);
+
   const handleMessage = useCallback(
     (message: Message) => {
       // Handle ROOM_CREATED messages
@@ -45,20 +94,11 @@ export function useWebSocket(onStartSong?: (message: Message) => void) {
       // Handle ROOM_STATE messages
       if (isRoomStateMessage(message)) {
         const { players, gameState: serverGameState, roomKey } = message.payload;
-        console.log("[useWebSocket] Received ROOM_STATE message:", {
-          roomKey,
-          playersCount: players?.length || 0,
-          playerIds: players?.map(p => p.id) || [],
-          playerNames: players?.map(p => p.name) || [],
-        });
         // Always update players list when ROOM_STATE is received
         // This ensures all clients see the latest player list
         // Update even if players array is empty (to clear stale data)
         if (Array.isArray(players)) {
-          console.log("[useWebSocket] Updating players list:", players.map(p => ({ id: p.id, name: p.name })));
           updatePlayers(players);
-        } else {
-          console.warn("[useWebSocket] ROOM_STATE message has invalid players array:", players);
         }
         
         // Get current game state from store
@@ -168,11 +208,6 @@ export function useWebSocket(onStartSong?: (message: Message) => void) {
       // Handle JOINED messages
       if (isJoinedMessage(message)) {
         const { playerId, players, roomKey } = message.payload;
-        console.log("[useWebSocket] Received JOINED message:", {
-          playerId,
-          roomKey,
-          playersCount: players.length,
-        });
         setPlayerId(playerId);
         // Persist playerId to localStorage
         updatePlayerId(playerId);
@@ -241,70 +276,9 @@ export function useWebSocket(onStartSong?: (message: Message) => void) {
       if (isStartSongMessage(message) && isHost && onStartSong) {
         onStartSong(message);
       }
-
-      // Handle PLAYLIST_SELECTED messages
-      if (isPlaylistSelectedMessage(message)) {
-        const { playlistId, playlistName, trackCount } = message.payload;
-        setPlaylist({
-          id: playlistId,
-          name: playlistName,
-          trackCount,
-        });
-      }
     },
-    [updatePlayers, updateGameState, setPlayerId, setError, setRoom, gameMode, isHost, onStartSong, setPlaylist]
+    [updatePlayers, updateGameState, setPlayerId, setError, setRoom, gameMode, isHost, onStartSong]
   );
-
-  // Connect on mount
-  useEffect(() => {
-    // First, check the actual WebSocket state and sync it with the store
-    // This ensures we have the correct state even if the WebSocket is already connected
-    const currentState = wsManager.getConnectionState();
-    if (currentState === "connected") {
-      setConnected(true);
-      setConnecting(false);
-    } else if (currentState === "connecting") {
-      setConnecting(true);
-      setConnected(false);
-    } else {
-      setConnecting(false);
-      setConnected(false);
-    }
-    
-    setError(null);
-    wsManager.connect();
-
-    // Track if we've ever successfully connected (to distinguish initial failure from reconnection)
-    let hasEverConnected = wsManager.isConnected();
-
-    // Subscribe to connection state changes
-    const unsubscribeConnectionState = wsManager.onConnectionStateChange((connected) => {
-      setConnected(connected);
-      // setConnected already sets connecting: false, so no need to call setConnecting separately
-      if (!connected) {
-        if (hasEverConnected) {
-          // We were connected before, so this is a reconnection scenario
-          setError("Connection lost. Attempting to reconnect...");
-        } else {
-          // Never connected - likely server not running
-          setError("Unable to connect to server. Please make sure the server is running.");
-        }
-      } else {
-        hasEverConnected = true;
-        setError(null);
-      }
-    });
-
-    // Subscribe to messages - use handleMessage directly to ensure we always use the latest callback
-    const unsubscribeMessages = wsManager.onMessage((message: Message) => {
-      handleMessage(message);
-    });
-
-    return () => {
-      unsubscribeConnectionState();
-      unsubscribeMessages();
-    };
-  }, [setConnected, setConnecting, setError, handleMessage]);
 
   // Function to send messages
   const sendMessage = useCallback((message: Message) => {

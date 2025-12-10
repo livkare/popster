@@ -45,28 +45,20 @@ export function LobbyScreen({
       {isHost && canStartGame && (
         <div className="card">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Start Game</h3>
-          {(() => {
-            const devMode = import.meta.env.DEV;
-            const needsPlayers = !devMode && players.length < 1;
-            return (
-              <>
-                {needsPlayers && (
-                  <p className="text-sm text-yellow-600 mb-4">
-                    Need at least 1 player to start
-                  </p>
-                )}
-                <button
-                  onClick={onStartGame}
-                  disabled={startGameDisabled || needsPlayers}
-                  className="btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {needsPlayers
-                    ? "Need at least 1 player"
-                    : "Start Game"}
-                </button>
-              </>
-            );
-          })()}
+          {players.length < 2 && (
+            <p className="text-sm text-yellow-600 mb-4">
+              Need at least 2 players to start
+            </p>
+          )}
+          <button
+            onClick={onStartGame}
+            disabled={startGameDisabled || players.length < 2}
+            className="btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {players.length < 2
+              ? "Need at least 2 players"
+              : "Start Game"}
+          </button>
         </div>
       )}
     </div>

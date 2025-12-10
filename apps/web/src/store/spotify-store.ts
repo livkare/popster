@@ -12,7 +12,7 @@ interface SpotifyState {
 interface SpotifyActions {
   setAuth: (accessToken: string, refreshToken: string) => void;
   setDeviceId: (deviceId: string | null) => void;
-  setPremium: (isPremium: boolean | null) => void;
+  setPremium: (isPremium: boolean) => void;
   setError: (error: string | null) => void;
   reset: () => void;
 }

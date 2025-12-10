@@ -36,20 +36,13 @@ export function useSpotifyAuth() {
 
   const [isChecking, setIsChecking] = useState(false);
 
-  // Check for existing tokens on mount and whenever store state might have changed
+  // Check for existing tokens on mount
   useEffect(() => {
     async function checkExistingTokens() {
-      // If we already have tokens in store, don't re-check unless they're missing
-      if (isAuthenticated && accessToken) {
-        console.log("[Spotify Auth] Already authenticated, skipping token check");
-        return;
-      }
-      
       setIsChecking(true);
       try {
         const tokens = await getTokens();
         if (tokens) {
-          console.log("[Spotify Auth] Found tokens in IndexedDB, loading into store");
           setAuth(tokens.accessToken, tokens.refreshToken);
 
           // Check premium status
@@ -62,18 +55,16 @@ export function useSpotifyAuth() {
             // Don't set to false on error - keep as null (unknown) so user can retry
             // Only set to false if we get a successful response that says not premium
           }
-        } else {
-          console.log("[Spotify Auth] No tokens found in IndexedDB");
         }
       } catch (err) {
-        console.error("[Spotify Auth] Failed to check tokens:", err);
+        console.error("Failed to check tokens:", err);
       } finally {
         setIsChecking(false);
       }
     }
 
     checkExistingTokens();
-  }, [setAuth, setPremium, isAuthenticated, accessToken]);
+  }, [setAuth, setPremium]);
 
   /**
    * Start OAuth flow - redirect to Spotify
