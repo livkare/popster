@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 
 export default defineConfig(({ command }) => ({
     // Set base path for GitHub Pages in production, root for local dev
-    base: command === 'build' ? '/Popster-Queen/' : '/',
+    base: command === 'build' ? '/popster/' : '/',
     server: {
         port: 3000,
         strictPort: true,
