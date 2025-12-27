@@ -3,6 +3,7 @@
 const CLIENT_ID = import.meta.env.VITE_SPOTIFY_CLIENT_ID;
 
 // Dynamically determine redirect URI based on environment
+// Uses hash-based routing (#/callback) to avoid 404 on GitHub Pages
 function getRedirectURI(): string {
   // Use environment variable if set
   if (import.meta.env.VITE_SPOTIFY_REDIRECT_URI) {
@@ -13,14 +14,14 @@ function getRedirectURI(): string {
   const origin = window.location.origin;
   const pathname = window.location.pathname;
 
-  // For GitHub Pages, construct URL with base path
+  // For GitHub Pages, use hash-based routing to avoid 404
   if (origin.includes('github.io')) {
     const basePath = pathname.split('/')[1] || '';
-    return `${origin}/${basePath}/callback`;
+    return `${origin}/${basePath}/#/callback`;
   }
 
-  // Local development fallback
-  return `${origin}/callback`;
+  // Local development - also use hash routing for consistency
+  return `${origin}/#/callback`;
 }
 
 const REDIRECT_URI = getRedirectURI();

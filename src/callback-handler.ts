@@ -44,16 +44,23 @@ export async function handleCallback(): Promise<boolean> {
 
 // Check if we're on the callback page
 export function isCallbackPage(): boolean {
-    const pathname = window.location.pathname;
-    const hasCallbackParams = window.location.search.includes('code=') || window.location.search.includes('error=');
-    
-    // Check if pathname is /callback OR if we have OAuth callback parameters (for SPA routing)
-    const isCallback = pathname === '/callback' || pathname.includes('/callback') || hasCallbackParams;
-    
+    const hash = window.location.hash;
+    const search = window.location.search;
+
+    // Check for hash-based callback route (#/callback)
+    // OAuth params can be in either search (old) or after hash (new)
+    const isHashCallback = hash.startsWith('#/callback');
+    const hasCallbackParams = search.includes('code=') || search.includes('error=') ||
+                              hash.includes('code=') || hash.includes('error=');
+
+    const isCallback = isHashCallback || hasCallbackParams;
+
     if (isCallback) {
         console.log('[Callback Handler] Callback page detected');
+        console.log('[Callback Handler] Hash:', hash);
+        console.log('[Callback Handler] Search:', search);
     }
-    
+
     return isCallback;
 }
 
