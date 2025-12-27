@@ -1,6 +1,8 @@
 import { defineConfig } from 'vite';
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
+    // Set base path for GitHub Pages in production, root for local dev
+    base: command === 'build' ? '/Popster-Queen/' : '/',
     server: {
         port: 3000,
         strictPort: true,
@@ -13,7 +15,9 @@ export default defineConfig({
             input: {
                 main: './index.html'
             }
-        }
+        },
+        // Ensure assets are copied correctly
+        assetsDir: 'assets'
     }
-});
+}));
 

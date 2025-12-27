@@ -1,14 +1,35 @@
 // Spotify OAuth 2.0 Configuration
-// Note: In production, client secret should be handled server-side
+// Using PKCE (Proof Key for Code Exchange) flow - no client secret needed
 const CLIENT_ID = import.meta.env.VITE_SPOTIFY_CLIENT_ID;
-const CLIENT_SECRET = import.meta.env.VITE_SPOTIFY_CLIENT_SECRET;
-const REDIRECT_URI = import.meta.env.VITE_SPOTIFY_REDIRECT_URI || 'http://127.0.0.1:3000/callback';
+
+// Dynamically determine redirect URI based on environment
+function getRedirectURI(): string {
+  // Use environment variable if set
+  if (import.meta.env.VITE_SPOTIFY_REDIRECT_URI) {
+    return import.meta.env.VITE_SPOTIFY_REDIRECT_URI;
+  }
+
+  // Auto-detect based on current URL
+  const origin = window.location.origin;
+  const pathname = window.location.pathname;
+
+  // For GitHub Pages, construct URL with base path
+  if (origin.includes('github.io')) {
+    const basePath = pathname.split('/')[1] || '';
+    return `${origin}/${basePath}/callback`;
+  }
+
+  // Local development fallback
+  return `${origin}/callback`;
+}
+
+const REDIRECT_URI = getRedirectURI();
 const SPOTIFY_AUTH_URL = 'https://accounts.spotify.com/authorize';
 const SPOTIFY_TOKEN_URL = 'https://accounts.spotify.com/api/token';
 
 // Validate environment variables
-if (!CLIENT_ID || !CLIENT_SECRET) {
-    console.error('Missing Spotify credentials in environment variables. Please check your .env file.');
+if (!CLIENT_ID) {
+    console.error('Missing Spotify Client ID in environment variables. Please check your .env file.');
 }
 
 // Storage keys
@@ -157,23 +178,23 @@ export async function exchangeCodeForTokens(code: string, state: string): Promis
     }
     console.log('[Token Exchange] Code verifier retrieved, length:', codeVerifier.length);
     
-    if (!CLIENT_ID || !CLIENT_SECRET) {
-        console.error('[Token Exchange] ERROR: Missing client credentials');
+    if (!CLIENT_ID) {
+        console.error('[Token Exchange] ERROR: Missing client ID');
         return false;
     }
-    
+
     try {
         console.log('[Token Exchange] Sending token exchange request to Spotify...');
         const response = await fetch(SPOTIFY_TOKEN_URL, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'Authorization': 'Basic ' + btoa(`${CLIENT_ID}:${CLIENT_SECRET}`)
+                'Content-Type': 'application/x-www-form-urlencoded'
             },
             body: new URLSearchParams({
                 grant_type: 'authorization_code',
                 code: code,
                 redirect_uri: REDIRECT_URI,
+                client_id: CLIENT_ID,
                 code_verifier: codeVerifier
             })
         });
@@ -213,22 +234,22 @@ export async function refreshAccessToken(): Promise<boolean> {
         return false;
     }
     
-    if (!CLIENT_ID || !CLIENT_SECRET) {
-        console.error('[Token Refresh] ERROR: Missing client credentials');
+    if (!CLIENT_ID) {
+        console.error('[Token Refresh] ERROR: Missing client ID');
         return false;
     }
-    
+
     try {
         console.log('[Token Refresh] Sending refresh request to Spotify...');
         const response = await fetch(SPOTIFY_TOKEN_URL, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'Authorization': 'Basic ' + btoa(`${CLIENT_ID}:${CLIENT_SECRET}`)
+                'Content-Type': 'application/x-www-form-urlencoded'
             },
             body: new URLSearchParams({
                 grant_type: 'refresh_token',
-                refresh_token: refreshToken
+                refresh_token: refreshToken,
+                client_id: CLIENT_ID
             })
         });
         

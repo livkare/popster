@@ -1,13 +1,5 @@
-import { WebSocketClient } from './websocket-client';
-
-// Generate a random UUID v4
-function randomUUID(): string {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = Math.random() * 16 | 0;
-    const v = c === 'x' ? r : (r & 0x3 | 0x8);
-    return v.toString(16);
-  });
-}
+import { PeerPlayerManager } from './peer-player';
+import { randomUUID } from './utils';
 
 const playerJoinPage = document.getElementById('player-join-page');
 const nameInput = document.getElementById('player-name-input') as HTMLInputElement;
@@ -16,20 +8,27 @@ const playerStatusText = document.getElementById('player-status-text');
 const playerGamePage = document.getElementById('player-game-page');
 const playerTimeline = document.getElementById('player-timeline');
 
-let wsClient: WebSocketClient | null = null;
-let gameId: string | null = null;
+let peerPlayer: PeerPlayerManager | null = null;
+let gameId: string | null = null; // This is the host peer ID
 let playerId: string | null = null;
 let playerName: string | null = null;
 let timelineCards: Array<{ id: string; track_id: string; track_name: string; artist: string; year: number | null; is_mystery: boolean; mystery_track_id: string | null; position: number; is_revealed: boolean; is_correct: boolean | null; album_image_url: string | null }> = [];
 let draggedCard: HTMLElement | null = null;
 let isRevealed: boolean = false;
 
-// Get game ID from URL
+// Get game ID (host peer ID) from URL hash
 function getGameIdFromURL(): string | null {
+  // Check hash first (for GitHub Pages compatibility)
+  const hash = window.location.hash;
+  const hashMatch = hash.match(/#\/join\/([^/]+)/);
+  if (hashMatch) return hashMatch[1];
+
+  // Fallback to pathname
   const path = window.location.pathname;
   const match = path.match(/\/join\/([^/]+)/);
   if (match) return match[1];
 
+  // Fallback to query params
   const params = new URLSearchParams(window.location.search);
   return params.get('gameId');
 }
@@ -95,10 +94,6 @@ function handleJoin(): void {
     return;
   }
 
-  // gameId is guaranteed to be non-null here due to early return check
-  const currentGameId = gameId;
-  if (!currentGameId) return;
-
   playerName = name;
   if (!playerId) {
     playerId = randomUUID();
@@ -106,178 +101,185 @@ function handleJoin(): void {
 
   // Store player info
   localStorage.setItem('playerId', playerId);
-  localStorage.setItem('playerGameId', currentGameId);
+  localStorage.setItem('playerGameId', gameId);
   localStorage.setItem('playerName', playerName);
 
   connectAsPlayer();
 }
 
-function connectAsPlayer(): void {
+async function connectAsPlayer(): Promise<void> {
   if (!gameId || !playerId || !playerName) return;
 
-  // Determine WebSocket URL
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const hostname = window.location.hostname;
-  const wsUrl = `${protocol}//${hostname}:3001`;
+  try {
+    peerPlayer = new PeerPlayerManager();
 
-  wsClient = new WebSocketClient(wsUrl);
-
-  wsClient.on('PLAYER_CONNECTED', (message) => {
-    console.log('Player connected:', message);
-    if (playerStatusText) {
-      playerStatusText.textContent = `Connected to game!`;
-    }
-    if (nameInput) {
-      nameInput.disabled = true;
-    }
-    if (joinButton) {
-      joinButton.textContent = 'Connected';
-      joinButton.disabled = true;
-    }
-
-    // Request state to restore timeline if game already started
-    setTimeout(() => {
-      if (wsClient && gameId && playerId) {
-        wsClient.send({
-          type: 'REQUEST_STATE',
-          gameId,
-          playerId
-        });
+    // Set up message handlers before connecting
+    peerPlayer.on('PLAYER_CONNECTED', (message) => {
+      console.log('Player connected:', message);
+      if (playerStatusText) {
+        playerStatusText.textContent = `Connected to game!`;
       }
-    }, 500);
-  });
+      if (nameInput) {
+        nameInput.disabled = true;
+      }
+      if (joinButton) {
+        joinButton.textContent = 'Connected';
+        joinButton.disabled = true;
+      }
 
-  wsClient.on('GAME_STARTED', () => {
-    if (playerJoinPage && playerGamePage) {
-      playerJoinPage.style.display = 'none';
-      playerGamePage.style.display = 'flex';
-    }
-  });
+      // Request state to restore timeline if game already started
+      setTimeout(() => {
+        if (peerPlayer && gameId && playerId) {
+          peerPlayer.send({
+            type: 'REQUEST_STATE',
+            gameId,
+            playerId
+          });
+        }
+      }, 500);
+    });
 
-  wsClient.on('PLAYER_CARD_DEALT', (message) => {
-    const card = {
-      id: message.card.id || `card-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      track_id: message.card.track_id,
-      track_name: message.card.track_name,
-      artist: message.card.artist,
-      year: message.card.year,
-      is_mystery: false,
-      mystery_track_id: null,
-      position: timelineCards.length,
-      is_revealed: false,
-      is_correct: null,
-      album_image_url: null
-    };
-    timelineCards.push(card);
-    renderTimeline();
-  });
-
-  wsClient.on('MYSTERY_SONG_PLAYING', (message) => {
-    // Add mystery placeholder to timeline
-    isRevealed = false;
-    const mysteryCard = {
-      id: message.cardId || `mystery-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      track_id: '',
-      track_name: '?',
-      artist: '?',
-      year: null,
-      is_mystery: true,
-      mystery_track_id: message.mysteryTrackId,
-      position: timelineCards.length,
-      is_revealed: false,
-      is_correct: null,
-      album_image_url: null
-    };
-    timelineCards.push(mysteryCard);
-    renderTimeline();
-  });
-
-  wsClient.on('MYSTERY_CARD_REVEALED', (message) => {
-    isRevealed = true;
-    const card = timelineCards.find(c => c.id === message.cardId);
-    if (card) {
-      card.is_revealed = true;
-      card.is_correct = message.isCorrect;
-      card.track_name = message.trackName;
-      card.artist = message.artist;
-      card.year = message.year;
-      card.album_image_url = message.albumImageUrl;
-    }
-    renderTimeline();
-  });
-
-  wsClient.on('MYSTERY_CARD_REMOVED', (message) => {
-    timelineCards = timelineCards.filter(c => c.id !== message.cardId);
-    isRevealed = false;
-    renderTimeline();
-  });
-
-  wsClient.on('MYSTERY_CARD_CONVERTED', (message) => {
-    // Convert mystery card to regular card
-    const card = timelineCards.find(c => c.id === message.cardId);
-    if (card) {
-      card.is_mystery = false;
-      card.track_id = message.track_id;
-      card.track_name = message.track_name;
-      card.artist = message.artist;
-      card.year = message.year;
-      card.album_image_url = message.album_image_url;
-      card.mystery_track_id = null;
-    }
-    isRevealed = false;
-    renderTimeline();
-  });
-
-  wsClient.on('STATE_SYNC', (message) => {
-    if (message.gameStarted && message.timeline) {
-      timelineCards = message.timeline.map((card: any) => ({
-        id: card.id,
-        track_id: card.track_id || '',
-        track_name: card.track_name,
-        artist: card.artist,
-        year: card.year,
-        is_mystery: card.is_mystery === 1 || card.is_mystery === true,
-        mystery_track_id: card.mystery_track_id,
-        position: card.position,
-        is_revealed: (card.is_revealed ?? 0) === 1,
-        is_correct: card.is_correct === null ? null : card.is_correct === 1,
-        album_image_url: card.album_image_url || null
-      }));
-      isRevealed = timelineCards.some(c => c.is_revealed);
-      renderTimeline();
-      
+    peerPlayer.on('GAME_STARTED', () => {
       if (playerJoinPage && playerGamePage) {
         playerJoinPage.style.display = 'none';
         playerGamePage.style.display = 'flex';
       }
-    }
-  });
+    });
 
-  wsClient.on('TIMELINE_UPDATED', () => {
-    // Timeline was successfully updated
-    console.log('Timeline updated');
-  });
+    peerPlayer.on('PLAYER_CARD_DEALT', (message) => {
+      const card = {
+        id: message.card.id || `card-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
+        track_id: message.card.track_id,
+        track_name: message.card.track_name,
+        artist: message.card.artist,
+        year: message.card.year,
+        is_mystery: false,
+        mystery_track_id: null,
+        position: timelineCards.length,
+        is_revealed: false,
+        is_correct: null,
+        album_image_url: null
+      };
+      timelineCards.push(card);
+      renderTimeline();
+    });
 
-  wsClient.on('ERROR', (message) => {
-    console.error('WebSocket error:', message.message);
-    if (playerStatusText) {
-      playerStatusText.textContent = `Error: ${message.message}`;
-    }
-  });
+    peerPlayer.on('MYSTERY_SONG_PLAYING', (message) => {
+      // Add mystery placeholder to timeline
+      isRevealed = false;
+      const mysteryCard = {
+        id: message.cardId || `mystery-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
+        track_id: '',
+        track_name: '?',
+        artist: '?',
+        year: null,
+        is_mystery: true,
+        mystery_track_id: message.mysteryTrackId,
+        position: timelineCards.length,
+        is_revealed: false,
+        is_correct: null,
+        album_image_url: null
+      };
+      timelineCards.push(mysteryCard);
+      renderTimeline();
+    });
 
-  wsClient.connect().then(() => {
-    wsClient!.send({
+    peerPlayer.on('MYSTERY_CARD_REVEALED', (message) => {
+      isRevealed = true;
+      const card = timelineCards.find(c => c.id === message.cardId);
+      if (card) {
+        card.is_revealed = true;
+        card.is_correct = message.isCorrect;
+        card.track_name = message.trackName;
+        card.artist = message.artist;
+        card.year = message.year;
+        card.album_image_url = message.albumImageUrl;
+      }
+      renderTimeline();
+    });
+
+    peerPlayer.on('MYSTERY_CARD_REMOVED', (message) => {
+      timelineCards = timelineCards.filter(c => c.id !== message.cardId);
+      isRevealed = false;
+      renderTimeline();
+    });
+
+    peerPlayer.on('MYSTERY_CARD_CONVERTED', (message) => {
+      // Convert mystery card to regular card
+      const card = timelineCards.find(c => c.id === message.cardId);
+      if (card) {
+        card.is_mystery = false;
+        card.track_id = message.track_id;
+        card.track_name = message.track_name;
+        card.artist = message.artist;
+        card.year = message.year;
+        card.album_image_url = message.album_image_url;
+        card.mystery_track_id = null;
+      }
+      isRevealed = false;
+      renderTimeline();
+    });
+
+    peerPlayer.on('STATE_SYNC', (message) => {
+      if (message.gameStarted && message.timeline) {
+        timelineCards = message.timeline.map((card: any) => ({
+          id: card.id,
+          track_id: card.track_id || '',
+          track_name: card.track_name,
+          artist: card.artist,
+          year: card.year,
+          is_mystery: Boolean(card.is_mystery),
+          mystery_track_id: card.mystery_track_id,
+          position: card.position,
+          is_revealed: Boolean(card.is_revealed),
+          is_correct: card.is_correct === null ? null : Boolean(card.is_correct),
+          album_image_url: card.album_image_url || null
+        }));
+        isRevealed = timelineCards.some(c => c.is_revealed);
+        renderTimeline();
+
+        if (playerJoinPage && playerGamePage) {
+          playerJoinPage.style.display = 'none';
+          playerGamePage.style.display = 'flex';
+        }
+      }
+    });
+
+    peerPlayer.on('TIMELINE_UPDATED', () => {
+      // Timeline was successfully updated
+      console.log('Timeline updated');
+    });
+
+    peerPlayer.on('ERROR', (message) => {
+      console.error('Peer error:', message.message);
+      if (playerStatusText) {
+        playerStatusText.textContent = `Error: ${message.message}`;
+      }
+    });
+
+    peerPlayer.on('connection_closed', () => {
+      if (playerStatusText) {
+        playerStatusText.textContent = 'Connection lost';
+      }
+    });
+
+    // Connect to host peer (gameId is the host's peer ID)
+    await peerPlayer.connect(gameId, playerId);
+
+    // Send join message
+    peerPlayer.send({
       type: 'PLAYER_JOIN',
       gameId,
       playerId,
       name: playerName
     });
-  }).catch((error) => {
+
+  } catch (error) {
     console.error('Failed to connect:', error);
     if (playerStatusText) {
       playerStatusText.textContent = 'Failed to connect to game';
     }
-  });
+  }
 }
 
 // Render timeline
@@ -552,12 +554,14 @@ function moveMysteryCardToSlot(slotPosition: number): void {
   // Update mystery card position
   mysteryCard.position = newPosition;
 
-  // Send update to server
-  wsClient.send({
-    type: 'UPDATE_TIMELINE',
-    playerId,
-    timelineUpdates: [{ id: mysteryCard.id, position: newPosition }]
-  });
+  // Send update to host
+  if (peerPlayer) {
+    peerPlayer.send({
+      type: 'UPDATE_TIMELINE',
+      playerId,
+      timelineUpdates: [{ id: mysteryCard.id, position: newPosition }]
+    });
+  }
 
   // Re-render timeline
   renderTimeline();
@@ -581,8 +585,8 @@ function getDragAfterElement(container: HTMLElement, y: number): HTMLElement | n
 
 // Update timeline positions after drag
 function updateTimelinePositions(): void {
-  if (!playerTimeline || !wsClient || !gameId || !playerId) return;
-  
+  if (!playerTimeline || !peerPlayer || !gameId || !playerId) return;
+
   // Don't allow updates if revealed
   if (isRevealed) return;
 
@@ -609,9 +613,9 @@ function updateTimelinePositions(): void {
     }
   });
 
-  // Send update to server
+  // Send update to host
   if (updates.length > 0) {
-    wsClient.send({
+    peerPlayer.send({
       type: 'UPDATE_TIMELINE',
       playerId,
       timelineUpdates: updates
@@ -621,6 +625,12 @@ function updateTimelinePositions(): void {
 
 // Check if we're on the player join page
 export function isPlayerJoinPage(): boolean {
-  return window.location.pathname.includes('/join') || window.location.search.includes('gameId=');
+  // Check hash (for GitHub Pages)
+  if (window.location.hash.includes('/join')) return true;
+  // Check pathname
+  if (window.location.pathname.includes('/join')) return true;
+  // Check query params
+  if (window.location.search.includes('gameId=')) return true;
+  return false;
 }
 

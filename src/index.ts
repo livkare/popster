@@ -1,6 +1,7 @@
 import { initializeAuth, isAuthenticated, getValidAccessToken } from './spotify-auth';
 import { handleCallback, isCallbackPage } from './callback-handler';
-import { WebSocketClient } from './websocket-client';
+import { PeerHostManager } from './peer-host';
+import { gameState } from './game-state';
 import { generateQRCode } from './qr-code';
 import { randomUUID } from './utils';
 import { initializePlayerJoin, isPlayerJoinPage } from './player-join';
@@ -34,9 +35,8 @@ type ButtonState = 'play' | 'stop' | 'reveal' | 'next';
 let currentButtonState: ButtonState = 'play';
 let currentMysteryTrack: { track_id: string; track_name: string; artist: string; year: number | null } | null = null;
 
-let wsClient: WebSocketClient | null = null;
+let peerHost: PeerHostManager | null = null;
 let gameId: string | null = null;
-let localIP: string = 'localhost';
 
 // Playlist data structures
 interface PlaylistTrack {
@@ -67,110 +67,121 @@ function updateConnectionStatus(connected: boolean, message: string) {
     }
 }
 
-// Initialize WebSocket connection as host
-async function initializeHostWebSocket(): Promise<void> {
-    // gameId should already be set by showTimeMusicPage()
+// Initialize PeerJS connection as host
+async function initializeHostPeer(): Promise<void> {
     if (!gameId) {
-        console.error('gameId not set before initializing WebSocket');
+        console.error('gameId not set before initializing Peer');
         return;
     }
 
-    // Determine WebSocket URL
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const hostname = window.location.hostname;
-    const wsUrl = `${protocol}//${hostname}:3001`;
-
-    wsClient = new WebSocketClient(wsUrl);
-
-    wsClient.on('HOST_CONNECTED', (message) => {
-        console.log('Host connected:', message);
-        localIP = message.localIP || hostname;
-        updateQRCode();
-    });
-
-    wsClient.on('PLAYER_LIST', (message) => {
-        updateHostPlayerList(message.players || []);
-        updateStartGameButtonState();
-    });
-
-    wsClient.on('GAME_STARTED', () => {
-        if (timemusicPage && gamePage) {
-            timemusicPage.style.display = 'none';
-            gamePage.style.display = 'flex';
-        }
-    });
-
-    wsClient.on('MYSTERY_CARD_SET', (message) => {
-        // Switch to game page when game starts
-        if (timemusicPage && gamePage) {
-            timemusicPage.style.display = 'none';
-            gamePage.style.display = 'flex';
-        }
-        currentMysteryTrack = message.mysteryTrack;
-        updateButtonState('play');
-        // Store mystery track info for play button
-        if (mysteryCard) {
-            mysteryCard.setAttribute('data-track-id', message.mysteryTrack.track_id);
-            // Reset card to mystery state
-            resetMysteryCard();
-        }
-    });
-
-    wsClient.on('MYSTERY_SONG_STOPPED', () => {
-        updateButtonState('reveal');
-    });
-
-    wsClient.on('MYSTERY_CARD_REVEALED', (message) => {
-        if (message.mysteryTrack) {
-            currentMysteryTrack = message.mysteryTrack;
-            revealMysteryCard(message.mysteryTrack);
-            updateButtonState('next');
-        }
-    });
-
-    wsClient.on('NEXT_CARD_SET', (message) => {
-        if (message.mysteryTrack) {
-            currentMysteryTrack = message.mysteryTrack;
-            if (mysteryCard) {
-                mysteryCard.setAttribute('data-track-id', message.mysteryTrack.track_id);
-                resetMysteryCard();
-            }
-            updateButtonState('play');
-        } else {
-            // No more tracks
-            if (playMysteryButton) {
-                playMysteryButton.textContent = 'Game Complete';
-                playMysteryButton.disabled = true;
-            }
-        }
-    });
-
-    wsClient.on('ERROR', (message) => {
-        console.error('WebSocket error:', message.message);
-        alert(`Error: ${message.message}`);
-    });
-
     try {
-        await wsClient.connect();
-        wsClient.send({
-            type: 'HOST_JOIN',
-            gameId
+        peerHost = new PeerHostManager();
+        const peerId = await peerHost.initialize(gameId);
+
+        // Create game in state
+        gameState.createGame(gameId);
+
+        console.log('Host peer initialized with ID:', peerId);
+        updateQRCode();
+
+        // Handle player join requests
+        peerHost.on('PLAYER_JOIN', (message, conn) => {
+            const { playerId, name } = message;
+            if (!playerId || !name) {
+                peerHost!.sendToPlayer(playerId, { type: 'ERROR', message: 'Missing required fields' });
+                return;
+            }
+
+            // Check if player already exists
+            const existingPlayer = gameState.getPlayer(playerId);
+            if (existingPlayer) {
+                // Reconnection
+                gameState.updatePlayerConnection(playerId, true);
+                peerHost!.sendToPlayer(playerId, {
+                    type: 'PLAYER_CONNECTED',
+                    gameId,
+                    playerId,
+                    name: existingPlayer.name
+                });
+            } else {
+                // New player
+                gameState.addPlayer(gameId!, playerId, name);
+                peerHost!.sendToPlayer(playerId, {
+                    type: 'PLAYER_CONNECTED',
+                    gameId,
+                    playerId,
+                    name
+                });
+            }
+
+            // Broadcast updated player list
+            broadcastPlayerList();
         });
+
+        // Handle player disconnection
+        peerHost.on('connection_closed', (message) => {
+            const { peerId: playerId } = message;
+            if (playerId) {
+                gameState.updatePlayerConnection(playerId, false);
+                broadcastPlayerList();
+            }
+        });
+
+        // Handle timeline updates from players
+        peerHost.on('UPDATE_TIMELINE', (message, conn) => {
+            const { playerId, timelineUpdates } = message;
+            if (!playerId || !timelineUpdates) {
+                peerHost!.sendToPlayer(playerId, { type: 'ERROR', message: 'Missing required fields' });
+                return;
+            }
+
+            gameState.updateTimelinePositions(playerId, timelineUpdates);
+            peerHost!.sendToPlayer(playerId, {
+                type: 'TIMELINE_UPDATED',
+                success: true
+            });
+        });
+
+        // Handle state requests
+        peerHost.on('REQUEST_STATE', (message, conn) => {
+            const { playerId } = message;
+            const currentGameState = gameState.getGameState(gameId!);
+
+            if (!currentGameState || !currentGameState.started) {
+                peerHost!.sendToPlayer(playerId, { type: 'STATE_SYNC', gameStarted: false });
+                return;
+            }
+
+            const timeline = gameState.getPlayerTimeline(playerId);
+            peerHost!.sendToPlayer(playerId, {
+                type: 'STATE_SYNC',
+                gameStarted: true,
+                timeline: timeline
+            });
+        });
+
     } catch (error) {
-        console.error('Failed to connect WebSocket:', error);
+        console.error('Failed to initialize peer:', error);
     }
+}
+
+// Broadcast player list to all connected peers
+function broadcastPlayerList(): void {
+    if (!gameId || !peerHost) return;
+
+    const players = gameState.getPlayers(gameId);
+    updateHostPlayerList(players);
+    updateStartGameButtonState();
 }
 
 // Update QR code display
 function updateQRCode(): void {
     if (!qrCodeContainer || !gameId) return;
 
-    const protocol = window.location.protocol;
-    const currentPort = window.location.port;
-    // Use current port if available, otherwise default to 3000 for development
-    const port = currentPort || '3000';
-    const joinUrl = `${protocol}//${localIP}:${port}/join/${gameId}`;
-    
+    // Generate join URL with host peer ID (same as gameId)
+    const baseUrl = window.location.origin + window.location.pathname;
+    const joinUrl = `${baseUrl}#/join/${gameId}`;
+
     generateQRCode(joinUrl, qrCodeContainer);
 }
 
@@ -205,11 +216,11 @@ async function showTimeMusicPage(createNewGame: boolean = false) {
         
         // Store that we're in TimeMusic mode
         localStorage.setItem('inTimeMusic', 'true');
-        
-        // Disconnect existing WebSocket connection if any
-        if (wsClient) {
-            wsClient.disconnect();
-            wsClient = null;
+
+        // Disconnect existing Peer connection if any
+        if (peerHost) {
+            peerHost.disconnect();
+            peerHost = null;
         }
         
         // Generate new game ID only when explicitly creating a new game (button click)
@@ -294,8 +305,8 @@ async function showTimeMusicPage(createNewGame: boolean = false) {
             updateConnectionStatus(false, 'Connection error');
         }
 
-        // Initialize WebSocket connection for multiplayer
-        await initializeHostWebSocket();
+        // Initialize PeerJS connection for multiplayer
+        await initializeHostPeer();
     }
 }
 
@@ -540,7 +551,7 @@ function updateStartGameButtonState(): void {
 
 // Start the game
 function handleStartGame(): void {
-    if (!wsClient || !gameId || !selectedPlaylist) {
+    if (!peerHost || !gameId || !selectedPlaylist) {
         alert('Cannot start game: missing requirements');
         return;
     }
@@ -549,14 +560,81 @@ function handleStartGame(): void {
         startGameButton.disabled = true;
     }
 
-    wsClient.send({
-        type: 'START_GAME',
-        gameId,
-        playlist: {
-            id: selectedPlaylist.id,
-            name: selectedPlaylist.name,
-            tracks: selectedPlaylist.tracks
-        }
+    // Save playlist
+    gameState.savePlaylist(gameId, selectedPlaylist);
+
+    // Initialize game state
+    gameState.initializeGameState(gameId);
+
+    const players = gameState.getPlayers(gameId);
+    if (players.length === 0) {
+        alert('No players in game');
+        if (startGameButton) startGameButton.disabled = false;
+        return;
+    }
+
+    let availableTracks = gameState.getAvailableTracks(gameId);
+    if (availableTracks.length < players.length + 1) {
+        alert('Not enough tracks in playlist');
+        if (startGameButton) startGameButton.disabled = false;
+        return;
+    }
+
+    // Deal one card to each player
+    players.forEach((player, index) => {
+        const randomIndex = Math.floor(Math.random() * availableTracks.length);
+        const track = availableTracks[randomIndex];
+
+        // Remove track and update available list
+        availableTracks = availableTracks.filter((_, i) => i !== randomIndex);
+
+        const timelineId = gameState.dealCardToPlayer(player.id, gameId!, track, index);
+        gameState.markTrackUsed(gameId!, track.id, 'dealt');
+
+        // Send card to player
+        peerHost!.sendToPlayer(player.id, {
+            type: 'PLAYER_CARD_DEALT',
+            card: {
+                id: timelineId,
+                track_id: track.id,
+                track_name: track.name,
+                artist: track.artist,
+                year: track.year
+            }
+        });
+    });
+
+    // Select mystery track from remaining available tracks
+    const mysteryIndex = Math.floor(Math.random() * availableTracks.length);
+    const mysteryTrack = availableTracks[mysteryIndex];
+    gameState.markTrackUsed(gameId!, mysteryTrack.id, 'mystery');
+    gameState.startGame(gameId!, mysteryTrack.id);
+
+    // Set current mystery track
+    currentMysteryTrack = {
+        track_id: mysteryTrack.id,
+        track_name: mysteryTrack.name,
+        artist: mysteryTrack.artist,
+        year: mysteryTrack.year
+    };
+
+    // Switch to game page
+    if (timemusicPage && gamePage) {
+        timemusicPage.style.display = 'none';
+        gamePage.style.display = 'flex';
+    }
+
+    // Update mystery card display
+    if (mysteryCard) {
+        mysteryCard.setAttribute('data-track-id', mysteryTrack.id);
+        resetMysteryCard();
+    }
+
+    updateButtonState('play');
+
+    // Broadcast game started to all players
+    peerHost!.broadcast({
+        type: 'GAME_STARTED'
     });
 }
 
@@ -646,7 +724,7 @@ async function revealMysteryCard(trackInfo: { track_id: string; track_name: stri
 
 // Handle mystery button click (state machine)
 async function handleMysteryButtonClick(): Promise<void> {
-    if (!wsClient || !gameId) return;
+    if (!peerHost || !gameId) return;
 
     switch (currentButtonState) {
         case 'play':
@@ -666,7 +744,7 @@ async function handleMysteryButtonClick(): Promise<void> {
 
 // Handle play mystery song
 async function handlePlayMysterySong(): Promise<void> {
-    if (!wsClient || !gameId) return;
+    if (!peerHost || !gameId) return;
 
     const trackId = mysteryCard?.getAttribute('data-track-id');
     if (!trackId) return;
@@ -686,11 +764,28 @@ async function handlePlayMysterySong(): Promise<void> {
         await startPlayback(token, trackId);
         console.log('Started playback for track:', trackId);
 
-        // Notify server that mystery song is playing
-        wsClient.send({
-            type: 'PLAY_MYSTERY_SONG',
-            gameId
-        });
+        // Update game state
+        gameState.setMysteryTrackPlaying(gameId, true);
+
+        // Add mystery placeholder to all players' timelines
+        const players = gameState.getPlayers(gameId);
+        const currentGameState = gameState.getGameState(gameId);
+
+        if (currentGameState && currentGameState.current_mystery_track_id) {
+            players.forEach(player => {
+                const timeline = gameState.getPlayerTimeline(player.id);
+                const maxPosition = timeline.length > 0
+                    ? Math.max(...timeline.map(t => t.position))
+                    : -1;
+                const mysteryId = gameState.addMysteryPlaceholder(player.id, gameId, currentGameState.current_mystery_track_id!, maxPosition + 1);
+
+                peerHost!.sendToPlayer(player.id, {
+                    type: 'MYSTERY_SONG_PLAYING',
+                    mysteryTrackId: currentGameState.current_mystery_track_id,
+                    cardId: mysteryId
+                });
+            });
+        }
 
         // Update button to Stop
         updateButtonState('stop');
@@ -703,7 +798,7 @@ async function handlePlayMysterySong(): Promise<void> {
 
 // Handle stop mystery song
 async function handleStopMysterySong(): Promise<void> {
-    if (!wsClient || !gameId) return;
+    if (!peerHost || !gameId) return;
 
     if (playMysteryButton) {
         playMysteryButton.disabled = true;
@@ -720,13 +815,11 @@ async function handleStopMysterySong(): Promise<void> {
         await pausePlayback(token);
         console.log('Stopped playback');
 
-        // Notify server that mystery song stopped
-        wsClient.send({
-            type: 'STOP_MYSTERY_SONG',
-            gameId
-        });
+        // Update game state
+        gameState.setMysteryTrackPlaying(gameId, false);
 
-        // Button state will be updated by MYSTERY_SONG_STOPPED message
+        // Update button to Reveal
+        updateButtonState('reveal');
     } catch (error) {
         console.error('Error stopping playback:', error);
         alert(`Failed to stop song: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -736,7 +829,7 @@ async function handleStopMysterySong(): Promise<void> {
 
 // Handle reveal mystery card
 async function handleRevealMysteryCard(): Promise<void> {
-    if (!wsClient || !gameId || !currentMysteryTrack) return;
+    if (!peerHost || !gameId || !currentMysteryTrack) return;
 
     if (playMysteryButton) {
         playMysteryButton.disabled = true;
@@ -746,7 +839,7 @@ async function handleRevealMysteryCard(): Promise<void> {
         // Fetch track details to get album image
         const token = await getValidAccessToken();
         let albumImageUrl: string | null = null;
-        
+
         if (token) {
             try {
                 const trackDetails = await fetchTrackDetails(token, currentMysteryTrack.track_id);
@@ -756,14 +849,56 @@ async function handleRevealMysteryCard(): Promise<void> {
             }
         }
 
-        // Notify server to reveal mystery card
-        wsClient.send({
-            type: 'REVEAL_MYSTERY_CARD',
-            gameId,
-            albumImageUrl
+        // Reveal mystery card for all players and check correctness
+        const players = gameState.getPlayers(gameId);
+        const currentGameState = gameState.getGameState(gameId);
+
+        if (!currentGameState || !currentGameState.current_mystery_track_id) {
+            alert('Game not started or no mystery track');
+            updateButtonState('reveal');
+            return;
+        }
+
+        const revealResults: Array<{ playerId: string; isCorrect: boolean }> = [];
+
+        players.forEach(player => {
+            const mysteryCard = gameState.getMysteryCardByTrackId(player.id, currentGameState.current_mystery_track_id!);
+            if (mysteryCard) {
+                const isCorrect = gameState.revealMysteryCard(
+                    player.id,
+                    mysteryCard.id,
+                    currentMysteryTrack.year,
+                    albumImageUrl,
+                    currentMysteryTrack.track_id,
+                    currentMysteryTrack.track_name,
+                    currentMysteryTrack.artist
+                );
+                revealResults.push({ playerId: player.id, isCorrect });
+
+                // Send reveal to player
+                peerHost!.sendToPlayer(player.id, {
+                    type: 'MYSTERY_CARD_REVEALED',
+                    mysteryTrackId: currentGameState.current_mystery_track_id,
+                    cardId: mysteryCard.id,
+                    isCorrect,
+                    trackName: currentMysteryTrack.track_name,
+                    artist: currentMysteryTrack.artist,
+                    year: currentMysteryTrack.year,
+                    albumImageUrl: albumImageUrl || null
+                });
+            }
         });
 
-        // Card reveal will be handled by MYSTERY_CARD_REVEALED message
+        // Reveal host's mystery card
+        await revealMysteryCard({
+            track_id: currentMysteryTrack.track_id,
+            track_name: currentMysteryTrack.track_name,
+            artist: currentMysteryTrack.artist,
+            year: currentMysteryTrack.year,
+            album_image_url: albumImageUrl
+        });
+
+        updateButtonState('next');
     } catch (error) {
         console.error('Error revealing card:', error);
         alert(`Failed to reveal card: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -773,19 +908,94 @@ async function handleRevealMysteryCard(): Promise<void> {
 
 // Handle next card
 async function handleNextCard(): Promise<void> {
-    if (!wsClient || !gameId) return;
+    if (!peerHost || !gameId) return;
 
     if (playMysteryButton) {
         playMysteryButton.disabled = true;
     }
 
-    // Notify server to move to next card
-    wsClient.send({
-        type: 'NEXT_CARD',
-        gameId
+    // Handle mystery cards: convert correct ones to regular cards, remove incorrect ones
+    const players = gameState.getPlayers(gameId);
+    const currentGameState = gameState.getGameState(gameId);
+    const currentMysteryTrackId = currentGameState?.current_mystery_track_id;
+
+    players.forEach(player => {
+        if (currentMysteryTrackId) {
+            const mysteryCard = gameState.getMysteryCardByTrackId(player.id, currentMysteryTrackId);
+            if (mysteryCard && mysteryCard.is_revealed) {
+                if (mysteryCard.is_correct && currentMysteryTrack) {
+                    // Convert correct mystery card to regular card
+                    gameState.convertMysteryCardToRegular(
+                        player.id,
+                        mysteryCard.id,
+                        currentMysteryTrack.track_id,
+                        currentMysteryTrack.track_name,
+                        currentMysteryTrack.artist,
+                        currentMysteryTrack.year,
+                        mysteryCard.album_image_url
+                    );
+
+                    // Notify player to convert card
+                    peerHost!.sendToPlayer(player.id, {
+                        type: 'MYSTERY_CARD_CONVERTED',
+                        cardId: mysteryCard.id,
+                        track_id: currentMysteryTrack.track_id,
+                        track_name: currentMysteryTrack.track_name,
+                        artist: currentMysteryTrack.artist,
+                        year: currentMysteryTrack.year,
+                        album_image_url: mysteryCard.album_image_url
+                    });
+                } else {
+                    // Remove incorrect mystery card
+                    gameState.removeMysteryCard(player.id, mysteryCard.id);
+
+                    // Notify player to remove card
+                    peerHost!.sendToPlayer(player.id, {
+                        type: 'MYSTERY_CARD_REMOVED',
+                        cardId: mysteryCard.id
+                    });
+                }
+            } else if (mysteryCard && !mysteryCard.is_revealed) {
+                // Remove unrevealed mystery cards
+                gameState.removeMysteryCard(player.id, mysteryCard.id);
+                peerHost!.sendToPlayer(player.id, {
+                    type: 'MYSTERY_CARD_REMOVED',
+                    cardId: mysteryCard.id
+                });
+            }
+        }
     });
 
-    // Next card will be handled by NEXT_CARD_SET message
+    // Select next mystery track
+    const availableTracks = gameState.getAvailableTracks(gameId);
+    if (availableTracks.length === 0) {
+        if (playMysteryButton) {
+            playMysteryButton.textContent = 'Game Complete';
+            playMysteryButton.disabled = true;
+        }
+        return;
+    }
+
+    const nextMysteryIndex = Math.floor(Math.random() * availableTracks.length);
+    const nextMysteryTrack = availableTracks[nextMysteryIndex];
+    gameState.markTrackUsed(gameId, nextMysteryTrack.id, 'mystery');
+    gameState.updateMysteryTrack(gameId, nextMysteryTrack.id);
+
+    // Set current mystery track
+    currentMysteryTrack = {
+        track_id: nextMysteryTrack.id,
+        track_name: nextMysteryTrack.name,
+        artist: nextMysteryTrack.artist,
+        year: nextMysteryTrack.year
+    };
+
+    // Update mystery card display
+    if (mysteryCard) {
+        mysteryCard.setAttribute('data-track-id', nextMysteryTrack.id);
+        resetMysteryCard();
+    }
+
+    updateButtonState('play');
 }
 
 // Initialize playlist selection handlers
@@ -814,38 +1024,6 @@ initializePlaylistSelection();
 // Initialize start game button
 startGameButton?.addEventListener('click', handleStartGame);
 playMysteryButton?.addEventListener('click', handleMysteryButtonClick);
-
-// Check for existing game state on load
-async function checkGameState(): Promise<void> {
-    if (!wsClient || !gameId) return;
-
-    // Request state after connection is established
-    setTimeout(() => {
-        if (wsClient && gameId) {
-            const stateHandler = (message: any) => {
-                if (message.gameStarted) {
-                    if (timemusicPage && gamePage) {
-                        timemusicPage.style.display = 'none';
-                        gamePage.style.display = 'flex';
-                    }
-                    if (message.gameState?.current_mystery_track_id && playMysteryButton) {
-                        playMysteryButton.disabled = false;
-                        if (mysteryCard) {
-                            mysteryCard.setAttribute('data-track-id', message.gameState.current_mystery_track_id);
-                        }
-                    }
-                }
-                wsClient!.off('STATE_SYNC', stateHandler);
-            };
-            
-            wsClient.on('STATE_SYNC', stateHandler);
-            wsClient.send({
-                type: 'REQUEST_STATE',
-                gameId
-            });
-        }
-    }, 1000);
-}
 
 // Periodically check token validity and refresh if needed
 setInterval(async () => {
