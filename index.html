@@ -3,22 +3,39 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Game</title>
+    <meta name="theme-color" content="#121212">
+    <meta name="description" content="Popster Queen - A music timeline game powered by Spotify">
+    <title>Popster Queen</title>
     <link rel="stylesheet" href="styles.css">
+    <!-- Preconnect for performance -->
+    <link rel="preconnect" href="https://api.spotify.com">
 </head>
 <body>
+    <!-- HOMEPAGE -->
     <div id="homepage" class="homepage">
         <div class="content">
-            <h1 class="title">Welcome to the Game</h1>
-            <button id="playButton" class="play-button">TimeMusic</button>
+            <div class="logo-container">
+                <svg class="logo-icon" width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="32" cy="32" r="30" stroke="#1DB954" stroke-width="4"/>
+                    <path d="M26 22L44 32L26 42V22Z" fill="#1DB954"/>
+                </svg>
+            </div>
+            <h1 class="title">Popster Queen</h1>
+            <p class="subtitle">The ultimate music timeline game</p>
+            <button id="playButton" class="play-button">
+                <span>Start Game</span>
+            </button>
         </div>
     </div>
+
+    <!-- TIMEMUSIC PAGE (HOST LOBBY) -->
     <div id="timemusic-page" class="timemusic-page" style="display: none;">
         <div class="content">
-            <h1 class="title">TimeMusic</h1>
+            <h1 class="title">Popster Queen</h1>
             <div id="connection-status" class="status-connecting">
-                <div id="connection-text" class="status-text">Connecting to Spotify...</div>
+                <span id="connection-text" class="status-text">Connecting to Spotify...</span>
             </div>
+            
             <div class="host-section">
                 <div class="qr-section">
                     <h2 class="section-title">Scan to Join</h2>
@@ -31,23 +48,35 @@
                     </div>
                 </div>
             </div>
+            
             <div class="game-controls">
-                <button id="select-playlist-button" class="play-button">Select Playlist</button>
+                <button id="select-playlist-button" class="play-button">
+                    <span>Select Playlist</span>
+                </button>
                 <div id="playlist-status" class="playlist-status" style="display: none;">
                     <span class="playlist-status-text">Playlist selected</span>
                 </div>
-                <button id="start-game-button" class="play-button" disabled>Start Game</button>
+                <button id="start-game-button" class="play-button" disabled>
+                    <span>Start Game</span>
+                </button>
             </div>
+
             <!-- Playlist Selection Modal -->
             <div id="playlist-modal" class="modal" style="display: none;">
                 <div class="modal-backdrop"></div>
                 <div class="modal-content">
                     <div class="modal-header">
                         <h2 class="modal-title">Select a Playlist</h2>
-                        <button id="modal-close-button" class="modal-close-button">&times;</button>
+                        <button id="modal-close-button" class="modal-close-button" aria-label="Close modal">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <line x1="18" y1="6" x2="6" y2="18"></line>
+                                <line x1="6" y1="6" x2="18" y2="18"></line>
+                            </svg>
+                        </button>
                     </div>
                     <div id="playlist-modal-body" class="modal-body">
                         <div id="playlist-loading" class="playlist-loading" style="display: none;">
+                            <div class="loading-spinner"></div>
                             <p>Loading playlists...</p>
                         </div>
                         <div id="playlist-error" class="playlist-error" style="display: none;">
@@ -59,17 +88,28 @@
             </div>
         </div>
     </div>
+
+    <!-- PLAYER JOIN PAGE -->
     <div id="player-join-page" class="player-join-page" style="display: none;">
         <div class="content">
+            <div class="logo-container">
+                <svg class="logo-icon" width="48" height="48" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="32" cy="32" r="30" stroke="#1DB954" stroke-width="4"/>
+                    <path d="M26 22L44 32L26 42V22Z" fill="#1DB954"/>
+                </svg>
+            </div>
             <h1 class="title">Join Game</h1>
+            <p class="subtitle">Enter your name to play</p>
             <div class="join-section">
                 <div class="input-group">
                     <input 
                         type="text" 
                         id="player-name-input" 
                         class="name-input" 
-                        placeholder="Enter your name"
+                        placeholder="Your name"
                         maxlength="20"
+                        autocomplete="off"
+                        autocapitalize="words"
                     />
                     <button id="player-join-button" class="join-button">Join</button>
                 </div>
@@ -77,9 +117,11 @@
             </div>
         </div>
     </div>
+
+    <!-- GAME PAGE (HOST) -->
     <div id="game-page" class="game-page" style="display: none;">
         <div class="content">
-            <h1 class="title">TimeMusic Game</h1>
+            <h1 class="title">Now Playing</h1>
             <div class="mystery-card-section">
                 <div id="mystery-card" class="mystery-card">
                     <div class="mystery-card-content">
@@ -87,20 +129,24 @@
                         <div class="mystery-card-info">Mystery Song</div>
                     </div>
                 </div>
-                <button id="play-mystery-button" class="play-button" disabled>Play</button>
+                <button id="play-mystery-button" class="play-button" disabled>
+                    <span>Play</span>
+                </button>
             </div>
         </div>
     </div>
+
+    <!-- PLAYER GAME PAGE -->
     <div id="player-game-page" class="player-game-page" style="display: none;">
         <div class="content">
-            <h1 class="title">TimeMusic Game</h1>
+            <h1 class="title">Your Timeline</h1>
+            <p class="section-title">Drag cards to arrange by release year</p>
             <div class="timeline-section">
-                <h2 class="section-title">Your Timeline</h2>
                 <div id="player-timeline" class="timeline-container"></div>
             </div>
         </div>
     </div>
+
     <script type="module" src="/src/index.ts"></script>
 </body>
 </html>
-
