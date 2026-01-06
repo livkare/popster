@@ -1,5 +1,12 @@
 import { PeerPlayerManager } from './peer-player';
 import { randomUUID } from './utils';
+import { polyfill } from 'mobile-drag-drop';
+import { scrollBehaviourDragImageTranslateOverride } from 'mobile-drag-drop/scroll-behaviour';
+
+// Initialize mobile drag and drop polyfill for iOS/Android support
+polyfill({
+  dragImageTranslateOverride: scrollBehaviourDragImageTranslateOverride
+});
 
 const playerJoinPage = document.getElementById('player-join-page');
 const nameInput = document.getElementById('player-name-input') as HTMLInputElement;

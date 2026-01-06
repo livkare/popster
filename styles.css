@@ -771,6 +771,22 @@ body {
     box-shadow: none;
 }
 
+/* Mobile drag and drop polyfill styles */
+.dnd-poly-drag-image {
+    opacity: 0.5 !important;
+}
+
+.dnd-poly-drag-image.dnd-poly-snapback {
+    -webkit-transition: -webkit-transform 250ms ease-out !important;
+    -moz-transition: -moz-transform 250ms ease-out !important;
+    -o-transition: -o-transform 250ms ease-out !important;
+    transition: transform 250ms ease-out !important;
+}
+
+.dnd-poly-drag-icon {
+    /* Base class for drop effect styles */
+}
+
 /* Responsive design */
 @media (max-width: 768px) {
     .mystery-card {
