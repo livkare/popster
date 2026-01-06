@@ -289,124 +289,30 @@ function renderTimeline(): void {
   // Sort cards by position
   timelineCards.sort((a, b) => a.position - b.position);
 
-  // Separate mystery card from regular cards
-  // Regular cards include: initial card and all converted mystery cards (is_mystery = false)
-  const regularCards = timelineCards.filter(c => !c.is_mystery).sort((a, b) => a.position - b.position);
-  const mysteryCard = timelineCards.find(c => c.is_mystery);
-  const mysteryCardRevealed = mysteryCard?.is_revealed || false;
-
-  // Build timeline with slots
+  // Build timeline - show all cards in chronological order
   let html = '';
-  
-  // Helper to check if mystery card is in a slot (only used when mystery card exists and is not revealed)
-  const isMysteryInSlot = (slotPos: number): boolean => {
-    if (!mysteryCard || mysteryCardRevealed) return false;
-    const regularPositions = regularCards.map(c => c.position).sort((a, b) => a - b);
-    
-    // Calculate expected position for this slot
-    let expectedPosition: number;
-    if (slotPos === -1) {
-      // Before first card
-      expectedPosition = regularPositions.length > 0 ? regularPositions[0] - 1 : 0;
-    } else if (slotPos >= regularCards.length) {
-      // After last card
-      expectedPosition = regularPositions.length > 0 
-        ? regularPositions[regularPositions.length - 1] + 1 
-        : 0;
+
+  timelineCards.forEach((card, index) => {
+    if (card.is_mystery) {
+      html += renderMysteryCard(card, index);
     } else {
-      // Between cards: after card at slotPos
-      if (slotPos === 0) {
-        expectedPosition = regularPositions[0] + 0.5;
-      } else if (slotPos < regularPositions.length) {
-        expectedPosition = (regularPositions[slotPos - 1] + regularPositions[slotPos]) / 2;
-      } else {
-        expectedPosition = regularPositions[regularPositions.length - 1] + 1;
-      }
+      html += renderRegularCard(card, index);
     }
-    
-    // Check if mystery card position is close to expected position (within 0.1)
-    return Math.abs(mysteryCard.position - expectedPosition) < 0.1;
-  };
-  
-  // If mystery card exists and is revealed, show it in chronological order with other cards
-  if (mysteryCard && mysteryCardRevealed) {
-    // Mystery card is revealed - show all cards in chronological order without slots
-    const allCards = [...regularCards, mysteryCard].sort((a, b) => a.position - b.position);
-    allCards.forEach((card, index) => {
-      if (card.is_mystery) {
-        html += renderMysteryCard(card, index);
-      } else {
-        html += renderRegularCard(card, index);
-      }
-    });
-  } else if (mysteryCard) {
-    // Mystery card exists but is not revealed - show all regular cards with slots between them
-    // Slot before first card (position -1)
-    html += `
-      <div class="timeline-slot ${isMysteryInSlot(-1) ? 'selected' : ''}" 
-           data-slot-position="-1"
-           data-is-mystery-slot="true">
-        ${isMysteryInSlot(-1) ? renderMysteryCard(mysteryCard) : '<div class="slot-placeholder">+</div>'}
-      </div>
-    `;
-
-    // Render all regular cards with slots between them
-    regularCards.forEach((card, index) => {
-      // Render the regular card (always show all regular cards including converted ones)
-      html += renderRegularCard(card, index);
-      
-      // Only add slot between cards if not the last card
-      if (index < regularCards.length - 1) {
-        // Slot after this card (position = index)
-        html += `
-          <div class="timeline-slot ${isMysteryInSlot(index) ? 'selected' : ''}" 
-               data-slot-position="${index}"
-               data-is-mystery-slot="true">
-            ${isMysteryInSlot(index) ? renderMysteryCard(mysteryCard) : '<div class="slot-placeholder">+</div>'}
-          </div>
-        `;
-      }
-    });
-
-    // Slot at the end (after last card) - only one slot at the end
-    html += `
-      <div class="timeline-slot ${isMysteryInSlot(regularCards.length) ? 'selected' : ''}" 
-           data-slot-position="${regularCards.length}"
-           data-is-mystery-slot="true">
-        ${isMysteryInSlot(regularCards.length) ? renderMysteryCard(mysteryCard) : '<div class="slot-placeholder">+</div>'}
-      </div>
-    `;
-  } else {
-    // No mystery card - just show all regular cards in chronological order (no slots)
-    regularCards.forEach((card, index) => {
-      html += renderRegularCard(card, index);
-    });
-  }
+  });
 
   playerTimeline.innerHTML = html;
 
-  // Add click handlers for mystery card slots
-  if (!isRevealed) {
-    const slots = playerTimeline.querySelectorAll('.timeline-slot[data-is-mystery-slot="true"]');
-    slots.forEach((slot) => {
-      slot.addEventListener('click', () => {
-        const slotPosition = parseInt(slot.getAttribute('data-slot-position') || '0', 10);
-        moveMysteryCardToSlot(slotPosition);
-      });
-    });
-  }
-
-  // Add drag and drop event listeners to regular cards only
-  const regularCardElements = playerTimeline.querySelectorAll('.timeline-card:not(.mystery-placeholder)');
-  regularCardElements.forEach((card) => {
+  // Add drag and drop event listeners to all cards (regular and mystery)
+  const allCardElements = playerTimeline.querySelectorAll('.timeline-card');
+  allCardElements.forEach((card) => {
     const cardElement = card as HTMLElement;
-    
+
     // Only allow dragging if not revealed
     if (isRevealed) {
       cardElement.setAttribute('draggable', 'false');
       return;
     }
-    
+
     cardElement.addEventListener('dragstart', (e) => {
       const dragEvent = e as DragEvent;
       draggedCard = cardElement;
@@ -429,11 +335,11 @@ function renderTimeline(): void {
       if (dragEvent.dataTransfer) {
         dragEvent.dataTransfer.dropEffect = 'move';
       }
-      
+
       if (!draggedCard || draggedCard === cardElement) return;
-      
+
       const afterElement = getDragAfterElement(playerTimeline!, dragEvent.clientY);
-      
+
       if (afterElement == null) {
         playerTimeline!.appendChild(draggedCard);
       } else {
@@ -488,14 +394,15 @@ function renderRegularCard(card: typeof timelineCards[0], index: number): string
 function renderMysteryCard(card: typeof timelineCards[0], index?: number): string {
   const isRevealedCard = card.is_revealed;
   const isCorrect = card.is_correct;
-  
+
   let cardClasses = 'timeline-card mystery-placeholder';
   if (isRevealedCard) {
     cardClasses += isCorrect ? ' revealed-correct' : ' revealed-incorrect';
   }
 
   return `
-    <div class="${cardClasses}" 
+    <div class="${cardClasses}"
+         draggable="${!isRevealedCard && !isRevealed}"
          data-card-id="${card.id}"
          ${index !== undefined ? `data-position="${index}"` : ''}>
       <div class="card-content">
@@ -517,7 +424,7 @@ function renderMysteryCard(card: typeof timelineCards[0], index?: number): strin
 
 // Move mystery card to a slot
 function moveMysteryCardToSlot(slotPosition: number): void {
-  if (!wsClient || !gameId || !playerId || isRevealed) return;
+  if (!peerPlayer || !gameId || !playerId || isRevealed) return;
 
   const mysteryCard = timelineCards.find(c => c.is_mystery);
   if (!mysteryCard) return;
@@ -590,10 +497,10 @@ function updateTimelinePositions(): void {
   // Don't allow updates if revealed
   if (isRevealed) return;
 
-  // Get only regular cards (not mystery cards) and exclude cards inside slots
-  const cards = Array.from(playerTimeline.querySelectorAll('.timeline-card:not(.mystery-placeholder)'))
+  // Get all cards (regular and mystery) and exclude cards inside slots
+  const cards = Array.from(playerTimeline.querySelectorAll('.timeline-card'))
     .filter(card => {
-      // Exclude cards that are inside slots (mystery cards in slots)
+      // Exclude cards that are inside slots
       return !card.closest('.timeline-slot');
     });
 
@@ -604,8 +511,8 @@ function updateTimelinePositions(): void {
     const cardId = card.getAttribute('data-card-id');
     if (cardId) {
       const cardData = timelineCards.find(c => c.id === cardId);
-      // Only update regular cards (not mystery cards) that aren't revealed
-      if (cardData && !cardData.is_mystery && !cardData.is_revealed) {
+      // Update all cards (regular and mystery) that aren't revealed
+      if (cardData && !cardData.is_revealed) {
         cardData.position = positionIndex;
         updates.push({ id: cardId, position: positionIndex });
         positionIndex++;
