@@ -987,6 +987,29 @@ body {
   color: var(--color-text-base);
 }
 
+/* Drop Indicator */
+.drop-indicator {
+  height: 3px;
+  width: 100%;
+  background: linear-gradient(90deg, transparent 0%, var(--spotify-green) 50%, transparent 100%);
+  border-radius: 2px;
+  margin: var(--space-2) 0;
+  box-shadow: 0 0 12px rgba(29, 185, 84, 0.8);
+  animation: indicatorPulse 1.5s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes indicatorPulse {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 12px rgba(29, 185, 84, 0.8);
+  }
+  50% {
+    opacity: 0.6;
+    box-shadow: 0 0 24px rgba(29, 185, 84, 1);
+  }
+}
+
 /* Timeline Slots */
 .timeline-slot {
   width: 100%;

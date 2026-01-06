@@ -22,6 +22,7 @@ let playerName: string | null = null;
 let timelineCards: Array<{ id: string; track_id: string; track_name: string; artist: string; year: number | null; is_mystery: boolean; mystery_track_id: string | null; position: number; is_revealed: boolean; is_correct: boolean | null; album_image_url: string | null }> = [];
 let draggedCard: HTMLElement | null = null;
 let isRevealed: boolean = false;
+let dropIndicator: HTMLElement | null = null;
 
 // Get game ID (host peer ID) from URL hash
 function getGameIdFromURL(): string | null {
@@ -336,6 +337,12 @@ function handleDragStart(e: Event): void {
   if (dragEvent.dataTransfer) {
     dragEvent.dataTransfer.effectAllowed = 'move';
   }
+
+  // Create and show drop indicator
+  if (!dropIndicator && playerTimeline) {
+    dropIndicator = document.createElement('div');
+    dropIndicator.className = 'drop-indicator';
+  }
 }
 
 function handleDragEnd(): void {
@@ -343,6 +350,11 @@ function handleDragEnd(): void {
     draggedCard.classList.remove('dragging');
   }
   draggedCard = null;
+
+  // Remove drop indicator from DOM
+  if (dropIndicator && dropIndicator.parentNode) {
+    dropIndicator.parentNode.removeChild(dropIndicator);
+  }
 }
 
 function handleDragOver(e: Event): void {
@@ -357,6 +369,16 @@ function handleDragOver(e: Event): void {
 
   const afterElement = getDragAfterElement(playerTimeline, dragEvent.clientY);
 
+  // Position drop indicator at insertion point
+  if (dropIndicator) {
+    if (afterElement == null) {
+      playerTimeline.appendChild(dropIndicator);
+    } else {
+      playerTimeline.insertBefore(dropIndicator, afterElement);
+    }
+  }
+
+  // Position the dragged card (keep existing behavior for smooth dragging)
   if (afterElement == null) {
     playerTimeline.appendChild(draggedCard);
   } else {
