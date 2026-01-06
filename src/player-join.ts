@@ -313,65 +313,53 @@ function renderTimeline(): void {
       return;
     }
 
-    cardElement.addEventListener('dragstart', (e) => {
-      const dragEvent = e as DragEvent;
-      draggedCard = cardElement;
-      draggedCard.classList.add('dragging');
-      if (dragEvent.dataTransfer) {
-        dragEvent.dataTransfer.effectAllowed = 'move';
-      }
-    });
-
-    cardElement.addEventListener('dragend', () => {
-      if (draggedCard) {
-        draggedCard.classList.remove('dragging');
-      }
-      draggedCard = null;
-    });
-
-    cardElement.addEventListener('dragover', (e) => {
-      const dragEvent = e as DragEvent;
-      dragEvent.preventDefault();
-      if (dragEvent.dataTransfer) {
-        dragEvent.dataTransfer.dropEffect = 'move';
-      }
-
-      if (!draggedCard || draggedCard === cardElement) return;
-
-      const afterElement = getDragAfterElement(playerTimeline!, dragEvent.clientY);
-
-      if (afterElement == null) {
-        playerTimeline!.appendChild(draggedCard);
-      } else {
-        playerTimeline!.insertBefore(draggedCard, afterElement);
-      }
-    });
-
-    cardElement.addEventListener('drop', (e) => {
-      e.preventDefault();
-      updateTimelinePositions();
-    });
+    cardElement.addEventListener('dragstart', handleDragStart);
+    cardElement.addEventListener('dragend', handleDragEnd);
+    cardElement.addEventListener('dragover', handleDragOver);
+    cardElement.addEventListener('drop', handleDrop);
   });
+}
 
-  // Handle drop on the timeline container itself (for empty spaces)
-  if (playerTimeline && !isRevealed) {
-    playerTimeline.addEventListener('dragover', (e) => {
-      const dragEvent = e as DragEvent;
-      dragEvent.preventDefault();
-      if (dragEvent.dataTransfer) {
-        dragEvent.dataTransfer.dropEffect = 'move';
-      }
-    });
-
-    playerTimeline.addEventListener('drop', (e) => {
-      e.preventDefault();
-      if (draggedCard && playerTimeline) {
-        // If dropped on empty space, append to end
-        playerTimeline.appendChild(draggedCard);
-        updateTimelinePositions();
-      }
-    });
+// Drag and drop event handlers (defined outside renderTimeline to avoid recreating)
+function handleDragStart(e: Event): void {
+  const dragEvent = e as DragEvent;
+  const cardElement = dragEvent.target as HTMLElement;
+  draggedCard = cardElement;
+  draggedCard.classList.add('dragging');
+  if (dragEvent.dataTransfer) {
+    dragEvent.dataTransfer.effectAllowed = 'move';
   }
+}
+
+function handleDragEnd(): void {
+  if (draggedCard) {
+    draggedCard.classList.remove('dragging');
+  }
+  draggedCard = null;
+}
+
+function handleDragOver(e: Event): void {
+  const dragEvent = e as DragEvent;
+  const cardElement = dragEvent.currentTarget as HTMLElement;
+  dragEvent.preventDefault();
+  if (dragEvent.dataTransfer) {
+    dragEvent.dataTransfer.dropEffect = 'move';
+  }
+
+  if (!draggedCard || !playerTimeline || draggedCard === cardElement) return;
+
+  const afterElement = getDragAfterElement(playerTimeline, dragEvent.clientY);
+
+  if (afterElement == null) {
+    playerTimeline.appendChild(draggedCard);
+  } else {
+    playerTimeline.insertBefore(draggedCard, afterElement);
+  }
+}
+
+function handleDrop(e: Event): void {
+  e.preventDefault();
+  updateTimelinePositions();
 }
 
 // Render a regular card
@@ -420,58 +408,6 @@ function renderMysteryCard(card: typeof timelineCards[0], index?: number): strin
       </div>
     </div>
   `;
-}
-
-// Move mystery card to a slot
-function moveMysteryCardToSlot(slotPosition: number): void {
-  if (!peerPlayer || !gameId || !playerId || isRevealed) return;
-
-  const mysteryCard = timelineCards.find(c => c.is_mystery);
-  if (!mysteryCard) return;
-
-  // Calculate new position based on slot
-  // Slot positions: -1 (before first), 0-N (after each card), N+1 (after last)
-  const regularCards = timelineCards.filter(c => !c.is_mystery).sort((a, b) => a.position - b.position);
-  
-  let newPosition: number;
-  if (slotPosition === -1) {
-    // Before all cards
-    newPosition = regularCards.length > 0 ? regularCards[0].position - 1 : 0;
-  } else if (slotPosition >= regularCards.length) {
-    // After all cards
-    newPosition = regularCards.length > 0 
-      ? Math.max(...regularCards.map(c => c.position)) + 1 
-      : 0;
-  } else {
-    // Between cards: after card at slotPosition
-    if (slotPosition === 0) {
-      // After first card
-      newPosition = regularCards[0].position + 0.5;
-    } else if (slotPosition < regularCards.length) {
-      // Between two cards
-      const cardBefore = regularCards[slotPosition - 1];
-      const cardAfter = regularCards[slotPosition];
-      newPosition = (cardBefore.position + cardAfter.position) / 2;
-    } else {
-      // Shouldn't happen, but fallback
-      newPosition = regularCards[regularCards.length - 1].position + 1;
-    }
-  }
-
-  // Update mystery card position
-  mysteryCard.position = newPosition;
-
-  // Send update to host
-  if (peerPlayer) {
-    peerPlayer.send({
-      type: 'UPDATE_TIMELINE',
-      playerId,
-      timelineUpdates: [{ id: mysteryCard.id, position: newPosition }]
-    });
-  }
-
-  // Re-render timeline
-  renderTimeline();
 }
 
 // Get element after which to insert dragged card (for vertical layout)
